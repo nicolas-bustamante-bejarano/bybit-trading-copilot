@@ -55,9 +55,11 @@ class PlaybookEvaluationRequest(BaseModel):
     def validate_playbook_inputs(self) -> "PlaybookEvaluationRequest":
         if self.playbook == PlaybookType.TREND_PULLBACK and self.fib is None:
             raise ValueError("trend_pullback requires fib anchors")
-        if self.playbook in {PlaybookType.RANGE_LONG, PlaybookType.RANGE_SHORT}:
-            if self.range_bounds is None:
-                raise ValueError("range playbooks require range_bounds")
+        if (
+            self.playbook in {PlaybookType.RANGE_LONG, PlaybookType.RANGE_SHORT}
+            and self.range_bounds is None
+        ):
+            raise ValueError("range playbooks require range_bounds")
         if self.playbook == PlaybookType.RANGE_LONG and self.side != Side.LONG:
             raise ValueError("range_long requires side=long")
         if self.playbook == PlaybookType.RANGE_SHORT and self.side != Side.SHORT:
