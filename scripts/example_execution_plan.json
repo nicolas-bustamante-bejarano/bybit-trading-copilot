@@ -1,0 +1,29 @@
+{
+  "symbol": "BNBUSDT",
+  "side": "short",
+  "account_equity": 4898.0,
+  "max_group_risk_pct": 0.02,
+  "hard_stop": 812.0,
+  "thesis_warning_level": 800.0,
+  "correlation_group": "crypto_beta",
+  "stage": "hold",
+  "current_legs": [
+    {"entry": 786.40, "quantity": 5.54}
+  ],
+  "targets": [
+    {"price": 776.0, "close_fraction": 0.20, "label": "TP1"},
+    {"price": 769.0, "close_fraction": 0.30, "label": "TP2"},
+    {"price": 759.0, "close_fraction": 0.30, "label": "TP3"},
+    {"price": 750.0, "close_fraction": 0.20, "label": "Runner"}
+  ],
+  "other_correlated_positions": [
+    {
+      "symbol": "ETHUSDT",
+      "side": "short",
+      "quantity": 0.80,
+      "entry": 2740.20,
+      "stop": 2820.0,
+      "correlation_group": "crypto_beta"
+    }
+  ]
+}
