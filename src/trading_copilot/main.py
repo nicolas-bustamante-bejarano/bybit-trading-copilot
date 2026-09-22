@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from decimal import Decimal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from trading_copilot.api.journal import router as journal_router
 from trading_copilot.api.state_changes import router as state_changes_router
 from trading_copilot.api.state_changes import set_status_provider
+from trading_copilot.api.workspace import router as workspace_router
 from trading_copilot.config import settings
 from trading_copilot.domain.execution import AddProjectionRequest, ExecutionPlanRequest
 from trading_copilot.domain.models import (
@@ -18,12 +20,14 @@ from trading_copilot.domain.models import (
 )
 from trading_copilot.domain.playbook import PlaybookEvaluationRequest
 from trading_copilot.domain.position_coach import PositionCoach
+from trading_copilot.domain.workspace import SizingRequest
 from trading_copilot.persistence.database import get_session, session_factory
 from trading_copilot.persistence.models import TradePlanRow
 from trading_copilot.services.account_normalizer import (
     normalize_account_snapshot,
 )
 from trading_copilot.services.bybit_private import BybitReadOnlyClient
+from trading_copilot.services.bybit_public import BybitPublicClient
 from trading_copilot.services.bybit_ws import BybitLinearStream
 from trading_copilot.services.execution import project_add, summarize_execution_plan
 from trading_copilot.services.indicators import fib_retracements
@@ -34,6 +38,7 @@ from trading_copilot.services.playbook import evaluate_playbook
 from trading_copilot.services.position_coach import evaluate_position_coach, load_coach_records
 from trading_copilot.services.reaction import ReactionThresholds
 from trading_copilot.services.risk import max_position_size, portfolio_risk_summary
+from trading_copilot.services.sizing import build_sizing_plan
 from trading_copilot.services.state_change_monitor import StateChangeMonitor
 from trading_copilot.services.structural_risk import structural_risk_summary
 
@@ -81,6 +86,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Bybit Trading Copilot", version="0.8.0", lifespan=lifespan)
 app.include_router(journal_router)
+app.include_router(workspace_router)
 app.include_router(state_changes_router)
 
 
@@ -339,6 +345,55 @@ def execution_project_add(request: AddProjectionRequest) -> dict:
 async def market_snapshot(symbol: str) -> dict:
     try:
         return await build_market_snapshot(symbol.upper())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/market/{symbol}/chart")
+async def market_chart(
+    symbol: str, timeframe: str = Query(default="1h"), limit: int = Query(default=300, ge=50, le=1000)
+) -> dict:
+    intervals = {"5m": "5", "15m": "15", "1h": "60", "4h": "240", "1D": "D", "3D": "D"}
+    if timeframe not in intervals:
+        raise HTTPException(422, "Unsupported timeframe")
+    try:
+        rows = await BybitPublicClient().klines(symbol.upper(), intervals[timeframe], limit * (3 if timeframe == "3D" else 1))
+        if timeframe == "3D":
+            grouped = [rows[i : i + 3] for i in range(0, len(rows), 3) if len(rows[i : i + 3]) == 3]
+            rows = [[g[0][0], g[0][1], str(max(Decimal(x[2]) for x in g)), str(min(Decimal(x[3]) for x in g)), g[-1][4], str(sum(Decimal(x[5]) for x in g))] for g in grouped]
+        from trading_copilot.services.indicators import ema
+
+        closes = [float(row[4]) for row in rows]
+        e12, e21 = ema(closes, 12), ema(closes, 21)
+        candles = [
+            {"time": int(row[0]) // 1000, "open": float(row[1]), "high": float(row[2]), "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]), "ema12": e12[i], "ema21": e21[i]}
+            for i, row in enumerate(rows)
+        ]
+        return {"symbol": symbol.upper(), "timeframe": timeframe, "candles": candles}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/workspace/sizing")
+async def workspace_sizing(request: SizingRequest, session: AsyncSession = Depends(get_session)) -> dict:
+    try:
+        account = await _normalized_account()
+        active = list((await session.scalars(select(TradePlanRow).where(TradePlanRow.lifecycle_status == "ACTIVE"))).all())
+        unique = {plan.symbol: plan for plan in active}
+        risk = structural_risk_summary(account, unique)
+        group = request.correlation_group or "DEFAULT"
+        group_data = risk["correlation_groups"].get(group, {"known_risk_usdt": Decimal(), "unknown": []})
+        instrument = await BybitPublicClient().instrument(request.symbol.upper())
+        lot = instrument.get("lotSizeFilter", {})
+        return build_sizing_plan(
+            request, equity=Decimal(str(account.equity_usdt)),
+            available_margin=Decimal(str(account.available_balance_usdt)) if account.available_balance_usdt is not None else None,
+            group_risk=Decimal(str(group_data["known_risk_usdt"])), group_unknown=bool(group_data["unknown"]),
+            qty_step=Decimal(lot.get("qtyStep", "1")), min_qty=Decimal(lot.get("minOrderQty", "0")),
+            min_notional=Decimal(lot.get("minNotionalValue", "0")),
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

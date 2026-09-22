@@ -50,12 +50,12 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 
 ## PR #19 — Live Trading Workspace
 
-- TradingView Lightweight Charts with historical bootstrap and live candle updates
-- Timeframe selection, 12/21 EMA, Fib, range, macro trendline, and horizontal-zone overlays
-- Entry, warning, invalidation, target, reaction, trigger, state-change, and actual execution markers
-- Volume, delta, open-interest, and book-response panels
-- Risk, sizing, leverage, and staged-sizing planner
-- Manual plan editor with no exchange actions
+- [x] Lightweight Charts workspace with public historical candles and 12/21 EMA overlays
+- [x] Timeframe and symbol selection, plus persisted manual horizontal zones
+- [x] Read-only, stop-based staged sizing with exchange quantity constraints and conservative friction
+- [x] Correlation-group capacity gates and novel-evidence requirements for adds
+- [x] Leverage shown only as a margin estimate; it never increases risk quantity
+- [ ] Streamed candle updates, richer markers, trendline editing, and flow panels remain future work
 
 ## PR #20 — Setup Scanner
 

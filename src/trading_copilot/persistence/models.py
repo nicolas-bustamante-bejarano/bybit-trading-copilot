@@ -149,6 +149,25 @@ class RangeDefinitionRow(SymbolMixin, OptionalPlanChildBase, Base):
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
 
+class ChartStructureRow(SymbolMixin, Base):
+    __tablename__ = "chart_structures"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    timeframe: Mapped[str] = mapped_column(String(16), index=True)
+    structure_type: Mapped[str] = mapped_column(String(32))
+    label: Mapped[str | None] = mapped_column(String(128))
+    lower_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    upper_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    anchor_one_time: Mapped[int | None] = mapped_column()
+    anchor_one_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    anchor_two_time: Mapped[int | None] = mapped_column()
+    anchor_two_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class CoachStateCursorRow(SymbolMixin, Base):
     __tablename__ = "coach_state_cursors"
     symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
