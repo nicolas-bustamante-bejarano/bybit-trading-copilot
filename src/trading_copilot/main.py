@@ -12,6 +12,7 @@ from trading_copilot.domain.models import (
     PositionRiskResult,
 )
 from trading_copilot.domain.playbook import PlaybookEvaluationRequest
+from trading_copilot.services.bybit_private import BybitReadOnlyClient
 from trading_copilot.services.bybit_ws import BybitLinearStream
 from trading_copilot.services.execution import project_add, summarize_execution_plan
 from trading_copilot.services.indicators import fib_retracements
@@ -47,12 +48,43 @@ async def lifespan(_: FastAPI):
                 await live_stream_task
 
 
-app = FastAPI(title="Bybit Trading Copilot", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Bybit Trading Copilot", version="0.6.0", lifespan=lifespan)
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/account/status")
+def account_status() -> dict:
+    return {
+        "enabled": settings.bybit_read_only_sync_enabled,
+        "credentials_configured": settings.has_read_only_credentials,
+        "mode": "read_only",
+    }
+
+
+def _read_only_client() -> BybitReadOnlyClient:
+    if not settings.bybit_read_only_sync_enabled:
+        raise HTTPException(status_code=503, detail="Read-only Bybit account sync is disabled")
+    if not settings.has_read_only_credentials:
+        raise HTTPException(status_code=503, detail="Read-only Bybit credentials are not configured")
+    return BybitReadOnlyClient(
+        api_key=settings.bybit_api_key or "",
+        api_secret=settings.bybit_api_secret or "",
+        base_url=settings.bybit_base_url,
+    )
+
+
+@app.get("/account/snapshot")
+async def account_snapshot() -> dict:
+    try:
+        return await _read_only_client().account_snapshot()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/live/status")
