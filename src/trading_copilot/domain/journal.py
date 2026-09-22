@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
@@ -22,8 +23,8 @@ class Action(str, Enum):
 
 
 class Target(BaseModel):
-    price: float
-    reduction_percent: float = Field(gt=0, le=1)
+    price: Decimal
+    reduction_percent: Decimal = Field(gt=0, le=1)
     ordering: int = Field(ge=0)
 
 
@@ -41,10 +42,10 @@ class TradePlanCreate(BaseModel):
     setup_type: str
     thesis: str
     lifecycle_status: str = "DRAFT"
-    hard_invalidation: float
-    thesis_warning: float | None = None
-    max_risk_percent: float = Field(gt=0, le=1)
-    max_risk_value: float | None = Field(default=None, ge=0)
+    hard_invalidation: Decimal
+    thesis_warning: Decimal | None = None
+    max_risk_percent: Decimal = Field(gt=0, le=1)
+    max_risk_value: Decimal | None = Field(default=None, ge=0)
     correlation_group: str | None = None
     entry_probe_plan: dict[str, Any] = Field(default_factory=dict)
     add_conditions: list[dict[str, Any]] = Field(default_factory=list)
@@ -54,16 +55,16 @@ class TradePlanCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_targets(self):
-        if sum(target.reduction_percent for target in self.target_ladder) > 1.000001:
+        if sum((target.reduction_percent for target in self.target_ladder), Decimal()) > Decimal(1):
             raise ValueError("target reductions cannot exceed 100%")
         return self
 
 
 class TradePlanPatch(BaseModel):
     lifecycle_status: str | None = None
-    thesis_warning: float | None = None
-    max_risk_percent: float | None = Field(default=None, gt=0, le=1)
-    max_risk_value: float | None = Field(default=None, ge=0)
+    thesis_warning: Decimal | None = None
+    max_risk_percent: Decimal | None = Field(default=None, gt=0, le=1)
+    max_risk_value: Decimal | None = Field(default=None, ge=0)
     entry_probe_plan: dict[str, Any] | None = None
     add_conditions: list[dict[str, Any]] | None = None
     target_ladder: list[Target] | None = None
@@ -73,7 +74,7 @@ class TradePlanPatch(BaseModel):
 class SnapshotCreate(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     symbol: str
-    price: float
+    price: Decimal
     action_considered: Action
     action_taken: Action | None = None
     state: dict[str, Any] = Field(default_factory=dict)
@@ -90,8 +91,8 @@ class ExecutionEventCreate(BaseModel):
     event_type: Action
     bybit_execution_id: str | None = None
     bybit_order_id: str | None = None
-    quantity: float | None = Field(default=None, ge=0)
-    price: float | None = None
+    quantity: Decimal | None = Field(default=None, ge=0)
+    price: Decimal | None = None
     position_before: dict[str, Any] = Field(default_factory=dict)
     position_after: dict[str, Any] = Field(default_factory=dict)
     risk_before: dict[str, Any] = Field(default_factory=dict)
@@ -104,7 +105,7 @@ class ExecutionEventCreate(BaseModel):
 
 
 class ReviewCreate(BaseModel):
-    realized_r: float | None = None
+    realized_r: Decimal | None = None
     facts: dict[str, bool | None] = Field(default_factory=dict)
     deviations: list[str] = Field(default_factory=list)
     lifecycle_history_complete: bool | None = None

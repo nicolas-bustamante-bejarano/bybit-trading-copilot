@@ -39,11 +39,23 @@ async def create_plan(body: TradePlanCreate, session: AsyncSession = Depends(get
     data = body.model_dump(exclude={"execution_rules", "target_ladder"})
     data["side"] = body.side.value
     data["symbol"] = body.symbol.upper()
-    data["target_ladder"] = [target.model_dump() for target in body.target_ladder]
-    plan = await TradePlanRepository(session).add(TradePlanRow(**data))
-    for rule in body.execution_rules:
-        session.add(ExecutionRuleRow(trade_plan_id=plan.id, **rule.model_dump(mode="json")))
-    await session.commit()
+    data["target_ladder"] = [target.model_dump(mode="json") for target in body.target_ladder]
+    plan = TradePlanRow(**data)
+    session.add(plan)
+    try:
+        await session.flush()
+        for rule in body.execution_rules:
+            session.add(ExecutionRuleRow(trade_plan_id=plan.id, **rule.model_dump(mode="json")))
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            409, "Trade plan or execution rule conflicts with existing data"
+        ) from exc
+    except Exception:
+        await session.rollback()
+        raise
+    await session.refresh(plan)
     return dump(plan)
 
 
@@ -80,7 +92,7 @@ async def patch_plan(
     plan = await require_plan(session, plan_id)
     for key, value in body.model_dump(exclude_unset=True).items():
         if key == "target_ladder" and value is not None:
-            value = [x.model_dump() if hasattr(x, "model_dump") else x for x in value]
+            value = [x.model_dump(mode="json") if hasattr(x, "model_dump") else x for x in value]
         setattr(plan, key, value)
     await session.commit()
     await session.refresh(plan)
@@ -94,7 +106,9 @@ async def create_snapshot(
     plan = await require_plan(session, plan_id)
     if body.symbol.upper() != plan.symbol:
         raise HTTPException(422, "Snapshot symbol must match the trade plan")
-    row = DecisionSnapshotRow(trade_plan_id=plan_id, **body.model_dump())
+    data = body.model_dump()
+    data["symbol"] = body.symbol.upper()
+    row = DecisionSnapshotRow(trade_plan_id=plan_id, **data)
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -119,7 +133,15 @@ async def create_event(
     plan = await require_plan(session, plan_id)
     if body.symbol.upper() != plan.symbol:
         raise HTTPException(422, "Execution event symbol must match the trade plan")
-    row = ExecutionEventRow(trade_plan_id=plan_id, **body.model_dump())
+    if body.decision_snapshot_id is not None:
+        snapshot = await session.get(DecisionSnapshotRow, body.decision_snapshot_id)
+        if snapshot is None:
+            raise HTTPException(422, "Decision snapshot does not exist")
+        if snapshot.trade_plan_id != plan_id:
+            raise HTTPException(422, "Decision snapshot belongs to a different trade plan")
+    data = body.model_dump()
+    data["symbol"] = body.symbol.upper()
+    row = ExecutionEventRow(trade_plan_id=plan_id, **data)
     session.add(row)
     try:
         await session.commit()

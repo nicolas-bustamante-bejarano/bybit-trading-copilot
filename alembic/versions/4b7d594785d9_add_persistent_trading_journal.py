@@ -2,7 +2,7 @@
 
 Revision ID: 4b7d594785d9
 Revises:
-Create Date: 2026-09-22 13:13:51.964028
+Create Date: 2026-09-22 13:22:02.262480
 
 """
 
@@ -30,10 +30,10 @@ def upgrade() -> None:
         sa.Column("setup_type", sa.String(length=64), nullable=False),
         sa.Column("thesis", sa.Text(), nullable=False),
         sa.Column("lifecycle_status", sa.String(length=32), nullable=False),
-        sa.Column("hard_invalidation", sa.Float(), nullable=False),
-        sa.Column("thesis_warning", sa.Float(), nullable=True),
-        sa.Column("max_risk_percent", sa.Float(), nullable=False),
-        sa.Column("max_risk_value", sa.Float(), nullable=True),
+        sa.Column("hard_invalidation", sa.Numeric(precision=28, scale=12), nullable=False),
+        sa.Column("thesis_warning", sa.Numeric(precision=28, scale=12), nullable=True),
+        sa.Column("max_risk_percent", sa.Numeric(precision=12, scale=8), nullable=False),
+        sa.Column("max_risk_value", sa.Numeric(precision=28, scale=12), nullable=True),
         sa.Column("correlation_group", sa.String(length=64), nullable=True),
         sa.Column("entry_probe_plan", sa.JSON(), nullable=False),
         sa.Column("add_conditions", sa.JSON(), nullable=False),
@@ -54,7 +54,7 @@ def upgrade() -> None:
         "decision_snapshots",
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("symbol", sa.String(length=32), nullable=False),
-        sa.Column("price", sa.Float(), nullable=False),
+        sa.Column("price", sa.Numeric(precision=28, scale=12), nullable=False),
         sa.Column("action_considered", sa.String(length=16), nullable=False),
         sa.Column("action_taken", sa.String(length=16), nullable=True),
         sa.Column("state", sa.JSON(), nullable=False),
@@ -104,13 +104,13 @@ def upgrade() -> None:
         "fib_definitions",
         sa.Column("symbol", sa.String(length=32), nullable=False),
         sa.Column("direction", sa.String(length=8), nullable=False),
-        sa.Column("swing_low", sa.Float(), nullable=False),
-        sa.Column("swing_high", sa.Float(), nullable=False),
+        sa.Column("swing_low", sa.Numeric(precision=28, scale=12), nullable=False),
+        sa.Column("swing_high", sa.Numeric(precision=28, scale=12), nullable=False),
         sa.Column("metadata", sa.JSON(), nullable=False),
         sa.Column("id", sa.String(length=36), nullable=False),
-        sa.Column("trade_plan_id", sa.String(length=36), nullable=False),
+        sa.Column("trade_plan_id", sa.String(length=36), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["trade_plan_id"], ["trade_plans.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["trade_plan_id"], ["trade_plans.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_fib_definitions_symbol"), "fib_definitions", ["symbol"], unique=False)
@@ -120,13 +120,13 @@ def upgrade() -> None:
     op.create_table(
         "range_definitions",
         sa.Column("symbol", sa.String(length=32), nullable=False),
-        sa.Column("range_low", sa.Float(), nullable=False),
-        sa.Column("range_high", sa.Float(), nullable=False),
+        sa.Column("range_low", sa.Numeric(precision=28, scale=12), nullable=False),
+        sa.Column("range_high", sa.Numeric(precision=28, scale=12), nullable=False),
         sa.Column("metadata", sa.JSON(), nullable=False),
         sa.Column("id", sa.String(length=36), nullable=False),
-        sa.Column("trade_plan_id", sa.String(length=36), nullable=False),
+        sa.Column("trade_plan_id", sa.String(length=36), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["trade_plan_id"], ["trade_plans.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["trade_plan_id"], ["trade_plans.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -140,7 +140,7 @@ def upgrade() -> None:
     )
     op.create_table(
         "trade_reviews",
-        sa.Column("realized_r", sa.Float(), nullable=True),
+        sa.Column("realized_r", sa.Numeric(precision=18, scale=8), nullable=True),
         sa.Column("facts", sa.JSON(), nullable=False),
         sa.Column("deviations", sa.JSON(), nullable=False),
         sa.Column("lifecycle_history_complete", sa.Boolean(), nullable=True),
@@ -162,9 +162,9 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("state", sa.JSON(), nullable=False),
         sa.Column("id", sa.String(length=36), nullable=False),
-        sa.Column("trade_plan_id", sa.String(length=36), nullable=False),
+        sa.Column("trade_plan_id", sa.String(length=36), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["trade_plan_id"], ["trade_plans.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["trade_plan_id"], ["trade_plans.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_watched_setups_symbol"), "watched_setups", ["symbol"], unique=False)
@@ -178,8 +178,8 @@ def upgrade() -> None:
         sa.Column("event_type", sa.String(length=16), nullable=False),
         sa.Column("bybit_execution_id", sa.String(length=128), nullable=True),
         sa.Column("bybit_order_id", sa.String(length=128), nullable=True),
-        sa.Column("quantity", sa.Float(), nullable=True),
-        sa.Column("price", sa.Float(), nullable=True),
+        sa.Column("quantity", sa.Numeric(precision=28, scale=12), nullable=True),
+        sa.Column("price", sa.Numeric(precision=28, scale=12), nullable=True),
         sa.Column("position_before", sa.JSON(), nullable=False),
         sa.Column("position_after", sa.JSON(), nullable=False),
         sa.Column("risk_before", sa.JSON(), nullable=False),
