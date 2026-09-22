@@ -18,9 +18,12 @@
 - [x] Book add/remove/replenishment metrics
 - [x] Open-interest ingestion
 - [x] Funding history + live funding state
-- [ ] Persist 1s/1m derived liquidity features
-- [ ] Absorption / failed-auction detector
-- [ ] Short-term price-response features for flow-vs-price divergence
+- [x] Build in-memory 1s/1m derived feature bars
+- [x] Price-response features for flow-vs-price divergence
+- [x] Initial absorption / continuation classifier
+- [ ] Persist 1s/1m derived feature bars
+- [ ] Calibrate reaction thresholds by symbol/liquidity regime
+- [ ] Failed-auction detector using multi-bar state
 
 > Note: raw L2 size reductions are stored as `removed`, not blindly called `cancelled`, because an order-book delta alone cannot prove whether size was cancelled or executed.
 
