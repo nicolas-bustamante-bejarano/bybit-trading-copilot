@@ -1,3 +1,7 @@
+import asyncio
+
+import pytest
+
 from trading_copilot.services.bybit_ws import BybitLinearStream
 from trading_copilot.services.live_market import LiveMarketStore
 from trading_copilot.services.orderbook import LocalOrderBook
@@ -95,3 +99,26 @@ def test_stream_subscribes_to_expected_topics():
     assert "publicTrade.ETHUSDT" in stream.subscription_args
     assert "tickers.BNBUSDT" in stream.subscription_args
     assert len(stream.subscription_args) == 6
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_after_disconnect(monkeypatch):
+    stream = BybitLinearStream(["BNBUSDT"])
+    calls = 0
+
+    async def fake_consume_once(_handler):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("simulated disconnect")
+        await stream.stop()
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(stream, "_consume_once", fake_consume_once)
+    monkeypatch.setattr(asyncio, "sleep", no_wait)
+
+    await stream.run(lambda _message: None)
+
+    assert calls == 2
