@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import time
@@ -101,7 +102,7 @@ class BybitReadOnlyClient:
         return payload["result"]["list"]
 
     async def account_snapshot(self) -> dict[str, Any]:
-        positions, executions, orders, wallet = await __import__("asyncio").gather(
+        positions, executions, orders, wallet = await asyncio.gather(
             self.positions(),
             self.executions(),
             self.open_orders(),
