@@ -1,10 +1,10 @@
 "use client";
-import { Activity, BookOpen, FlaskConical, LayoutDashboard, ListTree, Server, ShieldCheck } from "lucide-react";
+import { Activity, BookOpen, ChartNoAxesCombined, FlaskConical, LayoutDashboard, ListTree, Server, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 const links = [
-  ["/", "Dashboard", LayoutDashboard], ["/positions", "Positions", Activity], ["/trade-plans", "Trade Plans", ListTree],
+  ["/workspace", "Workspace", ChartNoAxesCombined], ["/", "Dashboard", LayoutDashboard], ["/positions", "Positions", Activity], ["/trade-plans", "Trade Plans", ListTree],
   ["/journal", "Journal", BookOpen], ["/system", "System", Server], ["/research-lab", "Research Lab", FlaskConical],
 ] as const;
 export function AppShell({ children }: { children: ReactNode }) {

@@ -53,3 +53,7 @@ export interface StateChangeMonitorStatus {
   enabled: boolean; running: boolean; interval_seconds: number; last_cycle_at: string | null;
   last_success_at: string | null; last_error: string | null;
 }
+export interface Candle { time: number; open: number; high: number; low: number; close: number; volume: number; ema12: number; ema21: number }
+export interface Chart { symbol: string; timeframe: string; candles: Candle[] }
+export interface ChartStructure { id: string; symbol: string; timeframe: string; structure_type: "HORIZONTAL_ZONE" | "TRENDLINE"; label: string | null; lower_price: string | null; upper_price: string | null; anchor_one_time: number | null; anchor_one_price: string | null; anchor_two_time: number | null; anchor_two_price: string | null; active: boolean }
+export interface Sizing { maximum_quantity: string; maximum_notional: string; permitted_risk_usdt: string; risk_per_unit_usdt: string; estimated_margin_usdt: string | null; suggested_min_leverage: string | null; stages: { state: string; quantity: string; notional: string; allowed: boolean; status: string; reasons: string[] }[] }
