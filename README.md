@@ -121,6 +121,11 @@ plan, account and correlation-group risk, 1H/4H market structure, persisted loca
 and live reaction evidence. Its open-position state precedence is `INVALIDATE`, explicit
 `EXIT/REDUCE`, eligible `ADD`, then `HOLD`.
 
+Market context and location come from the existing playbook evaluator, including its 4H regime
+requirements and Fib/range rules. An add also requires a supported condition or ADD rule that was
+stored in the plan before the decision. Attractive current evidence without a predefined add plan
+remains `HOLD`. Unknown or unevaluable add conditions block permission and are reported.
+
 Risk policy is `PASS` only when all material correlated positions have known structural risk and
 the known total is within the plan budget. It is `BREACH` when known risk exceeds that budget and
 `INDETERMINATE` when risk data or a plan budget is incomplete. Plan invalidations have

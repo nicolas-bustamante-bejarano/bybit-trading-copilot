@@ -165,6 +165,11 @@ async def position_coach(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if plan and plan.side.upper() != position.side.value.upper():
+            raise HTTPException(
+                status_code=409,
+                detail="Active trade plan side does not match the live position side",
+            )
         lifecycle = reconstruct_open_position_lifecycle(position, account.recent_fills)
         try:
             market = await build_market_snapshot(normalized_symbol)

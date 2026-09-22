@@ -4,12 +4,18 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trading_copilot.domain.account import NormalizedAccount, NormalizedPosition
 from trading_copilot.domain.lifecycle import PositionLifecycle
-from trading_copilot.domain.models import Side
+from trading_copilot.domain.models import Regime, Side
+from trading_copilot.domain.playbook import (
+    FibAnchors,
+    PlaybookEvaluationRequest,
+    PlaybookType,
+    RangeBounds,
+)
 from trading_copilot.domain.position_coach import (
     CoachExecution,
     CoachExecutionState,
@@ -27,12 +33,19 @@ from trading_copilot.persistence.models import (
     RangeDefinitionRow,
     TradePlanRow,
 )
+from trading_copilot.services.playbook import evaluate_playbook
 
-SUPPORTED_RULE_TYPES = {
+SUPPORTED_ADD_CONDITIONS = {
     "CONTEXT_VALID",
     "LOCATION_VALID",
     "CONFIRMATION_REQUIRED",
     "RISK_PASS_REQUIRED",
+    "DIRECTIONAL_CONFIRMATION",
+    "FRESH_DIRECTIONAL_CONFIRMATION",
+    "SELLER_CONFIRMATION",
+    "BUYER_CONFIRMATION",
+}
+SUPPORTED_RULE_TYPES = SUPPORTED_ADD_CONDITIONS | {
     "HARD_INVALIDATION",
     "THESIS_WARNING",
     "REDUCE_REQUIRED",
@@ -65,38 +78,109 @@ def _reaction_confirmation(side: Side, reaction: str | None) -> bool:
     return reaction in {"sell_continuation", "buy_absorption"}
 
 
-def _location(
+def _playbook_evidence(
+    plan: TradePlanRow | None,
     side: Side,
     mark: Decimal | None,
+    market: dict[str, Any] | None,
+    reaction: str | None,
+    confirmation: bool,
     fibs: list[FibDefinitionRow],
     ranges: list[RangeDefinitionRow],
-) -> tuple[str, EvidenceStatus, bool]:
-    definitions = len(fibs) + len(ranges)
-    if definitions == 0 or mark is None:
-        return "MISSING", EvidenceStatus.MISSING, False
-    if definitions > 1:
-        return "AMBIGUOUS", EvidenceStatus.INDETERMINATE, False
-    tolerance = abs(mark) * Decimal("0.005")
-    if ranges:
-        boundary = ranges[0].range_low if side == Side.LONG else ranges[0].range_high
-        at_location = abs(mark - boundary) <= tolerance
-        return (
-            ("AT_PLANNED_RANGE" if at_location else "AWAY_FROM_PLANNED_RANGE"),
-            EvidenceStatus.CONFIRMED,
-            at_location,
+) -> tuple[dict[str, Any] | None, str, EvidenceStatus, bool, bool]:
+    if plan is None or mark is None or market is None:
+        return None, "MISSING", EvidenceStatus.MISSING, False, False
+    timeframes = market.get("timeframes", {})
+    one_hour = timeframes.get("1h", {})
+    four_hour = timeframes.get("4h", {})
+    try:
+        playbook = PlaybookType(plan.setup_type.lower())
+        regime_1h = Regime(str(one_hour["regime"]))
+        regime_4h = Regime(str(four_hour["regime"]))
+    except (KeyError, ValueError):
+        return None, "INDETERMINATE", EvidenceStatus.INDETERMINATE, False, False
+
+    kwargs: dict[str, Any] = {}
+    if playbook == PlaybookType.TREND_PULLBACK:
+        if len(fibs) != 1:
+            status = EvidenceStatus.MISSING if not fibs else EvidenceStatus.INDETERMINATE
+            return None, "MISSING" if not fibs else "AMBIGUOUS", status, False, False
+        kwargs["fib"] = FibAnchors(
+            swing_low=float(fibs[0].swing_low), swing_high=float(fibs[0].swing_high)
         )
-    fib = fibs[0]
-    span = fib.swing_high - fib.swing_low
-    levels = [
-        fib.swing_low + span * Decimal(str(level))
-        for level in (0.236, 0.382, 0.5, 0.618, 0.786, 0.886)
-    ]
-    at_location = any(abs(mark - level) <= tolerance for level in levels)
-    return (
-        ("AT_PLANNED_FIB" if at_location else "AWAY_FROM_PLANNED_FIB"),
-        EvidenceStatus.CONFIRMED,
-        at_location,
+    else:
+        if len(ranges) != 1:
+            status = EvidenceStatus.MISSING if not ranges else EvidenceStatus.INDETERMINATE
+            return None, "MISSING" if not ranges else "AMBIGUOUS", status, False, False
+        kwargs["range_bounds"] = RangeBounds(
+            low=float(ranges[0].range_low), high=float(ranges[0].range_high)
+        )
+    request = PlaybookEvaluationRequest(
+        symbol=plan.symbol,
+        playbook=playbook,
+        side=side,
+        price=float(mark),
+        regime_1h=regime_1h,
+        regime_4h=regime_4h,
+        stoch_k=one_hour.get("stoch_rsi_k"),
+        stoch_d=one_hour.get("stoch_rsi_d"),
+        reaction_state=reaction,
+        trigger_confirmed=confirmation,
+        **kwargs,
     )
+    result = evaluate_playbook(request)
+    conditions = {condition["name"]: condition["status"] for condition in result["conditions"]}
+    context_name = (
+        "4h_regime_aligned" if playbook == PlaybookType.TREND_PULLBACK else "4h_range_regime"
+    )
+    context_valid = conditions.get(context_name) is True
+    location_data = result["location"]
+    at_location = bool(location_data.get("at_location"))
+    location = location_data.get("active_zone") or location_data.get("type") or "UNKNOWN"
+    return result, str(location).upper(), EvidenceStatus.CONFIRMED, at_location, context_valid
+
+
+def _planned_add_permission(
+    plan: TradePlanRow | None,
+    rules: list[ExecutionRuleRow],
+    *,
+    context_valid: bool,
+    at_location: bool,
+    confirmation: bool,
+    risk_pass: bool,
+) -> tuple[bool, list[str], list[str]]:
+    if plan is None:
+        return False, [], []
+    raw_conditions: list[Any] = list(plan.add_conditions or [])
+    raw_conditions.extend(rule.rule_type for rule in rules if str(rule.action).upper() == "ADD")
+    if not raw_conditions:
+        return False, ["no predefined add condition exists in the trade plan"], []
+
+    values = {
+        "CONTEXT_VALID": context_valid,
+        "LOCATION_VALID": at_location,
+        "CONFIRMATION_REQUIRED": confirmation,
+        "DIRECTIONAL_CONFIRMATION": confirmation,
+        "FRESH_DIRECTIONAL_CONFIRMATION": confirmation,
+        "SELLER_CONFIRMATION": confirmation,
+        "BUYER_CONFIRMATION": confirmation,
+        "RISK_PASS_REQUIRED": risk_pass,
+    }
+    unsatisfied: list[str] = []
+    unsupported: list[str] = []
+    for raw in raw_conditions:
+        if isinstance(raw, str):
+            name = raw
+        elif isinstance(raw, dict):
+            name = raw.get("type") or raw.get("rule_type") or raw.get("condition")
+        else:
+            name = None
+        normalized = str(name).upper() if name else "UNSPECIFIED"
+        if normalized not in SUPPORTED_ADD_CONDITIONS:
+            unsupported.append(normalized)
+        elif not values[normalized]:
+            unsatisfied.append(normalized)
+    return not unsatisfied and not unsupported, unsatisfied, unsupported
 
 
 def _risk(
@@ -178,12 +262,13 @@ def evaluate_position_coach(
 ) -> PositionCoach:
     now = now or datetime.now(UTC)
     side = position.side
+    if plan is not None and plan.side.upper() != side.value.upper():
+        raise ValueError("Active trade plan side does not match the live position side")
     mark = decimal(position.mark_price)
     invalidation = plan.hard_invalidation if plan else None
     warning = plan.thesis_warning if plan else None
     breached = _invalidation_breached(side, mark, invalidation)
     warned = _warning_crossed(side, mark, warning) and not breached
-    location, location_status, at_location = _location(side, mark, fibs, ranges)
 
     reaction_payload = (live or {}).get("reaction_1m")
     reaction = reaction_payload.get("state") if reaction_payload else None
@@ -197,6 +282,9 @@ def evaluate_position_coach(
         reaction_status = EvidenceStatus.CONFIRMED
     confirmation = reaction_status == EvidenceStatus.CONFIRMED and _reaction_confirmation(
         side, reaction
+    )
+    playbook_result, location, location_status, at_location, context_valid = _playbook_evidence(
+        plan, side, mark, market, reaction, confirmation, fibs, ranges
     )
 
     risk = _risk(account, position, plan, plans_by_symbol)
@@ -235,9 +323,26 @@ def evaluate_position_coach(
     triggered_rule_types = {
         rule.rule_type for rule in rules if (rule.parameters or {}).get("triggered") is True
     }
-    context_valid = market is not None
     if not context_valid:
-        evidence_missing.append("current 1H/4H market context")
+        evidence_missing.append("playbook context is valid")
+    planned_add_satisfied, unsatisfied_add, unsupported_add = _planned_add_permission(
+        plan,
+        rules,
+        context_valid=context_valid,
+        at_location=at_location,
+        confirmation=confirmation,
+        risk_pass=risk.policy_status == RiskPolicyStatus.PASS,
+    )
+    if (
+        plan
+        and not (plan.add_conditions or [])
+        and not any(str(rule.action).upper() == "ADD" for rule in rules)
+    ):
+        blocking.append("no predefined add condition exists in the trade plan")
+    if unsatisfied_add:
+        blocking.append("predefined add conditions are unsatisfied: " + ", ".join(unsatisfied_add))
+    if unsupported_add:
+        blocking.append("unsupported predefined add conditions: " + ", ".join(unsupported_add))
 
     add_allowed = bool(
         plan
@@ -248,6 +353,7 @@ def evaluate_position_coach(
         and confirmation
         and risk.policy_status == RiskPolicyStatus.PASS
         and not unsupported
+        and planned_add_satisfied
     )
     if breached:
         state = CoachExecutionState.INVALIDATE
@@ -323,6 +429,8 @@ def evaluate_position_coach(
             },
             location=location,
             location_status=location_status,
+            playbook_state=str(playbook_result["state"]).upper() if playbook_result else None,
+            playbook_conditions=playbook_result["conditions"] if playbook_result else [],
             reaction=reaction,
             reaction_status=reaction_status,
             order_flow=(live or {}).get("trade_flow_60s", {}),
@@ -378,16 +486,45 @@ async def load_coach_records(session: AsyncSession, symbol: str):
                 )
             ).all()
         )
-    association = [FibDefinitionRow.symbol == symbol]
+    fibs = []
+    ranges = []
     if plan:
-        association.append(FibDefinitionRow.trade_plan_id == plan.id)
-    fibs = list((await session.scalars(select(FibDefinitionRow).where(or_(*association)))).all())
-    range_association = [RangeDefinitionRow.symbol == symbol]
-    if plan:
-        range_association.append(RangeDefinitionRow.trade_plan_id == plan.id)
-    ranges = list(
-        (await session.scalars(select(RangeDefinitionRow).where(or_(*range_association)))).all()
-    )
+        fibs = list(
+            (
+                await session.scalars(
+                    select(FibDefinitionRow).where(FibDefinitionRow.trade_plan_id == plan.id)
+                )
+            ).all()
+        )
+        ranges = list(
+            (
+                await session.scalars(
+                    select(RangeDefinitionRow).where(RangeDefinitionRow.trade_plan_id == plan.id)
+                )
+            ).all()
+        )
+    if not fibs:
+        fibs = list(
+            (
+                await session.scalars(
+                    select(FibDefinitionRow).where(
+                        FibDefinitionRow.symbol == symbol,
+                        FibDefinitionRow.trade_plan_id.is_(None),
+                    )
+                )
+            ).all()
+        )
+    if not ranges:
+        ranges = list(
+            (
+                await session.scalars(
+                    select(RangeDefinitionRow).where(
+                        RangeDefinitionRow.symbol == symbol,
+                        RangeDefinitionRow.trade_plan_id.is_(None),
+                    )
+                )
+            ).all()
+        )
     all_active = list(
         (
             await session.scalars(

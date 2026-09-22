@@ -18,10 +18,11 @@ from trading_copilot.persistence.models import (
     Base,
     DecisionSnapshotRow,
     ExecutionRuleRow,
+    FibDefinitionRow,
     RangeDefinitionRow,
     TradePlanRow,
 )
-from trading_copilot.services.position_coach import evaluate_position_coach
+from trading_copilot.services.position_coach import evaluate_position_coach, load_coach_records
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -40,12 +41,20 @@ def position(symbol="BNBUSDT", side=Side.LONG, mark=600, stop=550):
     )
 
 
-def plan(symbol="BNBUSDT", side="LONG", invalidation="550", warning=None, max_risk="0.1"):
+def plan(
+    symbol="BNBUSDT",
+    side="LONG",
+    invalidation="550",
+    warning=None,
+    max_risk="0.1",
+    setup_type=None,
+    add_conditions=None,
+):
     return TradePlanRow(
         id=f"plan-{symbol}",
         symbol=symbol,
         side=side,
-        setup_type="TREND_PULLBACK",
+        setup_type=setup_type or ("RANGE_LONG" if side == "LONG" else "RANGE_SHORT"),
         thesis="Planned pullback",
         lifecycle_status="ACTIVE",
         hard_invalidation=Decimal(invalidation),
@@ -53,6 +62,9 @@ def plan(symbol="BNBUSDT", side="LONG", invalidation="550", warning=None, max_ri
         max_risk_percent=Decimal(max_risk),
         correlation_group="crypto_beta",
         target_ladder=[],
+        add_conditions=(
+            [{"type": "CONFIRMATION_REQUIRED"}] if add_conditions is None else add_conditions
+        ),
     )
 
 
@@ -108,9 +120,15 @@ def evaluate(
     rules=None,
     other_positions=(),
     other_plans=None,
+    market=None,
+    fibs=None,
 ):
     item = item or position()
-    active = plan(item.symbol, item.side.value.upper()) if active_plan is True else active_plan
+    active = (
+        plan(item.symbol, item.side.value.upper())
+        if active_plan is True
+        else (None if active_plan is False else active_plan)
+    )
     all_positions = (item, *other_positions)
     plans = {item.symbol: active} if active else {}
     plans.update(other_plans or {})
@@ -121,9 +139,15 @@ def evaluate(
         plan=active,
         rules=rules or [],
         plans_by_symbol=plans,
-        market={"timeframes": {"1h": {"regime": "range"}, "4h": {"regime": "uptrend"}}},
+        market=market
+        or {
+            "timeframes": {
+                "1h": {"regime": "range", "stoch_rsi_k": 15, "stoch_rsi_d": 20},
+                "4h": {"regime": "range"},
+            }
+        },
         live=live(reaction, age_seconds),
-        fibs=[],
+        fibs=fibs or [],
         ranges=[range_at(item.symbol, item.side, str(item.mark_price))] if ranges else [],
         now=NOW,
     )
@@ -165,7 +189,7 @@ def test_warning_crossed_does_not_invalidate():
 
 def test_location_without_reaction_cannot_add():
     result = evaluate(reaction=None)
-    assert result.market_context.location == "AT_PLANNED_RANGE"
+    assert result.market_context.location == "LOWER_RANGE_EXTREME"
     assert result.execution.add_allowed is False
 
 
@@ -187,6 +211,104 @@ def test_all_required_evidence_allows_add():
     assert result.risk.policy_status == RiskPolicyStatus.PASS
     assert result.execution.state == CoachExecutionState.ADD
     assert result.execution.add_allowed is True
+
+
+def test_no_predefined_add_condition_holds_despite_valid_market_evidence():
+    result = evaluate(active_plan=plan(add_conditions=[]), reaction="buy_continuation")
+    assert result.execution.state == CoachExecutionState.HOLD
+    assert result.execution.add_allowed is False
+    assert "no predefined add condition" in " ".join(result.execution.blocking_reasons)
+
+
+def test_predefined_add_condition_must_be_satisfied():
+    result = evaluate(
+        active_plan=plan(add_conditions=[{"type": "LOCATION_VALID"}]),
+        reaction="buy_continuation",
+        ranges=False,
+    )
+    assert result.execution.state == CoachExecutionState.HOLD
+    assert result.execution.add_allowed is False
+    assert "LOCATION_VALID" in " ".join(result.execution.blocking_reasons)
+
+
+def test_unknown_predefined_add_condition_is_indeterminate_and_blocks_add():
+    result = evaluate(
+        active_plan=plan(add_conditions=[{"type": "MOON_PHASE"}]),
+        reaction="buy_continuation",
+    )
+    assert result.execution.state == CoachExecutionState.HOLD
+    assert result.execution.add_allowed is False
+    assert "MOON_PHASE" in " ".join(result.execution.blocking_reasons)
+
+
+@pytest.mark.parametrize(
+    ("side", "wrong_regime"),
+    [(Side.LONG, "downtrend"), (Side.SHORT, "uptrend")],
+)
+def test_trend_pullback_wrong_4h_regime_cannot_add(side, wrong_regime):
+    item = position(side=side)
+    active = plan(
+        side=side.value.upper(),
+        setup_type="TREND_PULLBACK",
+        add_conditions=[{"type": "CONTEXT_VALID"}],
+    )
+    fib = FibDefinitionRow(
+        symbol="BNBUSDT",
+        direction=side.value.upper(),
+        swing_low=Decimal(500),
+        swing_high=Decimal(700),
+    )
+    result = evaluate(
+        item=item,
+        active_plan=active,
+        reaction="buy_continuation" if side == Side.LONG else "sell_continuation",
+        fibs=[fib],
+        market={
+            "timeframes": {
+                "1h": {"regime": wrong_regime, "stoch_rsi_k": 15, "stoch_rsi_d": 20},
+                "4h": {"regime": wrong_regime},
+            }
+        },
+    )
+    assert result.execution.add_allowed is False
+    assert result.market_context.playbook_state == "NO_SETUP"
+
+
+def test_valid_trend_pullback_uses_existing_playbook_evaluation():
+    active = plan(setup_type="TREND_PULLBACK")
+    fib = FibDefinitionRow(
+        symbol="BNBUSDT", direction="LONG", swing_low=Decimal(500), swing_high=Decimal(700)
+    )
+    result = evaluate(
+        active_plan=active,
+        reaction="buy_continuation",
+        fibs=[fib],
+        market={
+            "timeframes": {
+                "1h": {"regime": "uptrend", "stoch_rsi_k": 15, "stoch_rsi_d": 20},
+                "4h": {"regime": "uptrend"},
+            }
+        },
+    )
+    assert result.market_context.playbook_state == "READY"
+    assert any(
+        condition["name"] == "4h_regime_aligned"
+        for condition in result.market_context.playbook_conditions
+    )
+
+
+def test_range_playbook_outside_4h_range_regime_cannot_add():
+    result = evaluate(
+        reaction="buy_continuation",
+        market={
+            "timeframes": {
+                "1h": {"regime": "uptrend", "stoch_rsi_k": 15, "stoch_rsi_d": 20},
+                "4h": {"regime": "uptrend"},
+            }
+        },
+    )
+    assert result.execution.add_allowed is False
+    assert result.market_context.playbook_state == "NO_SETUP"
 
 
 @pytest.mark.parametrize(("reaction", "age"), [(None, 0), ("buy_continuation", 121)])
@@ -286,6 +408,29 @@ async def test_multiple_active_plans_return_409(coach_client, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("position_side", "plan_side"),
+    [(Side.SHORT, "LONG"), (Side.LONG, "SHORT")],
+)
+async def test_active_plan_side_mismatch_returns_409(
+    coach_client, monkeypatch, position_side, plan_side
+):
+    client, sessions = coach_client
+    item = position(side=position_side)
+
+    async def live_account():
+        return account(item)
+
+    monkeypatch.setattr(main_module, "_normalized_account", live_account)
+    async with sessions() as session:
+        session.add(plan(side=plan_side))
+        await session.commit()
+    response = await client.get("/positions/BNBUSDT/coach")
+    assert response.status_code == 409
+    assert "side does not match" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_get_coach_performs_no_journal_writes(coach_client, monkeypatch):
     client, sessions = coach_client
     item = position()
@@ -299,3 +444,109 @@ async def test_get_coach_performs_no_journal_writes(coach_client, monkeypatch):
     async with sessions() as session:
         count = await session.scalar(select(func.count()).select_from(DecisionSnapshotRow))
         assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_active_plan_fib_wins_over_old_plan_fib(coach_client):
+    _, sessions = coach_client
+    active = plan(setup_type="TREND_PULLBACK")
+    old = plan(setup_type="TREND_PULLBACK")
+    old.id = "old-plan"
+    old.lifecycle_status = "CLOSED"
+    async with sessions() as session:
+        session.add_all(
+            [
+                active,
+                old,
+                FibDefinitionRow(
+                    trade_plan_id=active.id,
+                    symbol="BNBUSDT",
+                    direction="LONG",
+                    swing_low=500,
+                    swing_high=700,
+                ),
+                FibDefinitionRow(
+                    trade_plan_id=old.id,
+                    symbol="BNBUSDT",
+                    direction="LONG",
+                    swing_low=100,
+                    swing_high=200,
+                ),
+            ]
+        )
+        await session.commit()
+        _, _, fibs, _, _ = await load_coach_records(session, "BNBUSDT")
+    assert len(fibs) == 1
+    assert fibs[0].trade_plan_id == active.id
+
+
+@pytest.mark.asyncio
+async def test_active_plan_range_wins_over_old_plan_range(coach_client):
+    _, sessions = coach_client
+    active = plan()
+    old = plan()
+    old.id = "old-plan"
+    old.lifecycle_status = "CLOSED"
+    async with sessions() as session:
+        session.add_all(
+            [
+                active,
+                old,
+                RangeDefinitionRow(
+                    trade_plan_id=active.id, symbol="BNBUSDT", range_low=500, range_high=700
+                ),
+                RangeDefinitionRow(
+                    trade_plan_id=old.id, symbol="BNBUSDT", range_low=100, range_high=200
+                ),
+            ]
+        )
+        await session.commit()
+        _, _, _, ranges, _ = await load_coach_records(session, "BNBUSDT")
+    assert len(ranges) == 1
+    assert ranges[0].trade_plan_id == active.id
+
+
+@pytest.mark.asyncio
+async def test_multiple_active_plan_definitions_remain_ambiguous(coach_client):
+    _, sessions = coach_client
+    active = plan(setup_type="TREND_PULLBACK")
+    async with sessions() as session:
+        session.add(active)
+        session.add_all(
+            [
+                FibDefinitionRow(
+                    trade_plan_id=active.id,
+                    symbol="BNBUSDT",
+                    direction="LONG",
+                    swing_low=500,
+                    swing_high=700,
+                ),
+                FibDefinitionRow(
+                    trade_plan_id=active.id,
+                    symbol="BNBUSDT",
+                    direction="LONG",
+                    swing_low=400,
+                    swing_high=800,
+                ),
+            ]
+        )
+        await session.commit()
+        _, _, fibs, _, _ = await load_coach_records(session, "BNBUSDT")
+    result = evaluate(active_plan=active, reaction="buy_continuation", fibs=fibs, ranges=False)
+    assert result.market_context.location_status == "INDETERMINATE"
+    assert result.execution.add_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_standalone_definition_is_fallback_when_plan_has_none(coach_client):
+    _, sessions = coach_client
+    active = plan()
+    standalone = RangeDefinitionRow(
+        trade_plan_id=None, symbol="BNBUSDT", range_low=500, range_high=700
+    )
+    async with sessions() as session:
+        session.add_all([active, standalone])
+        await session.commit()
+        _, _, _, ranges, _ = await load_coach_records(session, "BNBUSDT")
+    assert len(ranges) == 1
+    assert ranges[0].trade_plan_id is None

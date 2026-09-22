@@ -61,6 +61,8 @@ class CoachMarketContext(BaseModel):
     stoch_rsi: dict[str, Decimal | None] = Field(default_factory=dict)
     location: str
     location_status: EvidenceStatus
+    playbook_state: str | None = None
+    playbook_conditions: list[dict[str, Any]] = Field(default_factory=list)
     reaction: str | None = None
     reaction_status: EvidenceStatus
     order_flow: dict[str, Any] = Field(default_factory=dict)
