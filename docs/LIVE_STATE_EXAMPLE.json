@@ -1,0 +1,25 @@
+{
+  "source": "bybit",
+  "category": "linear",
+  "symbol": "BNBUSDT",
+  "timestamp_ms": 0,
+  "last_price": 786.5,
+  "mark_price": 786.45,
+  "index_price": 786.42,
+  "open_interest": 10000,
+  "funding_rate": -0.00003,
+  "orderbook": {
+    "best_bid": 786.4,
+    "best_ask": 786.6,
+    "mid_price": 786.5,
+    "spread_bps": 2.54,
+    "depth": {
+      "10": {"bid_qty": 0, "ask_qty": 0, "bid_notional": 0, "ask_notional": 0, "imbalance": 0},
+      "25": {"bid_qty": 0, "ask_qty": 0, "bid_notional": 0, "ask_notional": 0, "imbalance": 0},
+      "50": {"bid_qty": 0, "ask_qty": 0, "bid_notional": 0, "ask_notional": 0, "imbalance": 0}
+    },
+    "change_flow_60s": {},
+    "top_levels": {"bids": [], "asks": []}
+  },
+  "trade_flow_60s": {}
+}
