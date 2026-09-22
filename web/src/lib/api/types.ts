@@ -39,6 +39,16 @@ export interface TradePlan {
   target_ladder: Record<string, unknown>[]; notes: string | null; created_at: string; updated_at: string;
   execution_rules?: ExecutionRule[];
 }
-export interface Snapshot { id: string; timestamp: string; symbol: string; price: string; action_considered: string; action_taken: string | null; evidence_present: string[]; evidence_missing: string[]; reason: string | null }
+export interface Snapshot { id: string; timestamp: string; symbol: string; price: string; action_considered: string; action_taken: string | null; state?: Record<string, unknown>; evidence_present: string[]; evidence_missing: string[]; reason: string | null }
 export interface ExecutionEvent { id: string; timestamp: string; symbol: string; event_type: string; quantity: string | null; price: string | null; planned: boolean | null; confidence_status: string }
 export interface TradeReview { id: string; created_at: string; realized_r: string | null; facts: Record<string, boolean | null>; deviations: string[]; lifecycle_history_complete: boolean | null; data_confidence: Record<string, unknown> }
+export interface StateChange {
+  id: string; timestamp: string; symbol: string; trade_plan_id: string | null;
+  decision_snapshot_id: string | null; event_type: string; importance: "INFO" | "WARNING" | "CRITICAL";
+  summary: string; changes: { field: string; from: unknown; to: unknown }[];
+  state_before: Record<string, unknown>; state_after: Record<string, unknown>; confidence_status: string;
+}
+export interface StateChangeMonitorStatus {
+  enabled: boolean; running: boolean; interval_seconds: number; last_cycle_at: string | null;
+  last_success_at: string | null; last_error: string | null;
+}
