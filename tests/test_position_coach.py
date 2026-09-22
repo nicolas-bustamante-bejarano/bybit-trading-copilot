@@ -290,11 +290,56 @@ def test_valid_trend_pullback_uses_existing_playbook_evaluation():
             }
         },
     )
-    assert result.market_context.playbook_state == "READY"
+    assert result.market_context.playbook_state == "WAITING_FOR_TRIGGER"
     assert any(
         condition["name"] == "4h_regime_aligned"
         for condition in result.market_context.playbook_conditions
     )
+
+
+def test_supportive_reaction_does_not_manufacture_trigger_or_ready_state():
+    active = plan(setup_type="TREND_PULLBACK")
+    fib = FibDefinitionRow(
+        symbol="BNBUSDT", direction="LONG", swing_low=Decimal(500), swing_high=Decimal(700)
+    )
+    result = evaluate(
+        active_plan=active,
+        reaction="buy_continuation",
+        fibs=[fib],
+        market={
+            "timeframes": {
+                "1h": {"regime": "uptrend", "stoch_rsi_k": 15, "stoch_rsi_d": 20},
+                "4h": {"regime": "uptrend"},
+            }
+        },
+    )
+    trigger = next(
+        condition
+        for condition in result.market_context.playbook_conditions
+        if condition["name"] == "trigger_confirmed"
+    )
+    assert trigger["status"] is False
+    assert result.market_context.playbook_state != "READY"
+
+
+@pytest.mark.parametrize(
+    ("side", "condition", "reaction"),
+    [
+        (Side.LONG, "SELLER_CONFIRMATION", "buy_continuation"),
+        (Side.SHORT, "BUYER_CONFIRMATION", "sell_continuation"),
+    ],
+)
+def test_directional_named_add_condition_blocks_wrong_position_side(side, condition, reaction):
+    item = position(side=side)
+    active = plan(
+        side=side.value.upper(),
+        invalidation="650" if side == Side.SHORT else "550",
+        add_conditions=[{"type": condition}],
+    )
+    result = evaluate(item=item, active_plan=active, reaction=reaction)
+    assert result.execution.state == CoachExecutionState.HOLD
+    assert result.execution.add_allowed is False
+    assert condition in " ".join(result.execution.blocking_reasons)
 
 
 def test_range_playbook_outside_4h_range_regime_cannot_add():

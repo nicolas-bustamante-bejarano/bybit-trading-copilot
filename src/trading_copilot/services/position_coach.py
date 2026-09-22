@@ -125,7 +125,7 @@ def _playbook_evidence(
         stoch_k=one_hour.get("stoch_rsi_k"),
         stoch_d=one_hour.get("stoch_rsi_d"),
         reaction_state=reaction,
-        trigger_confirmed=confirmation,
+        trigger_confirmed=False,
         **kwargs,
     )
     result = evaluate_playbook(request)
@@ -144,6 +144,7 @@ def _planned_add_permission(
     plan: TradePlanRow | None,
     rules: list[ExecutionRuleRow],
     *,
+    side: Side,
     context_valid: bool,
     at_location: bool,
     confirmation: bool,
@@ -162,8 +163,8 @@ def _planned_add_permission(
         "CONFIRMATION_REQUIRED": confirmation,
         "DIRECTIONAL_CONFIRMATION": confirmation,
         "FRESH_DIRECTIONAL_CONFIRMATION": confirmation,
-        "SELLER_CONFIRMATION": confirmation,
-        "BUYER_CONFIRMATION": confirmation,
+        "SELLER_CONFIRMATION": side == Side.SHORT and confirmation,
+        "BUYER_CONFIRMATION": side == Side.LONG and confirmation,
         "RISK_PASS_REQUIRED": risk_pass,
     }
     unsatisfied: list[str] = []
@@ -328,6 +329,7 @@ def evaluate_position_coach(
     planned_add_satisfied, unsatisfied_add, unsupported_add = _planned_add_permission(
         plan,
         rules,
+        side=side,
         context_valid=context_valid,
         at_location=at_location,
         confirmation=confirmation,
