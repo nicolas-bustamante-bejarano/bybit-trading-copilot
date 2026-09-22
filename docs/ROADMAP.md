@@ -33,7 +33,7 @@
 - [x] Trend Pullback / Range Long / Range Short
 - [x] Setup state machine
 - [x] Evidence-first conditions with no numeric score
-- [ ] Persist watched setups and manual Fib/range definitions
+- [x] Persist watched setups and manual Fib/range definitions
 - [ ] Detect trigger/reclaim events from lower-timeframe price action
 - [ ] Alerts only when setup state changes
 
@@ -46,9 +46,9 @@
 - [x] Block adds that exceed correlation-group risk budget
 - [x] Block adds when predefined confirmation is absent
 - [x] Correlated exposure warnings through shared risk bucket
-- [ ] Persist trade plans and lifecycle events
+- [x] Persist trade plans, typed execution rules, decision snapshots, and lifecycle events
 - [ ] Reduce/stop-management policy after targets are reached
-- [ ] Automatic post-trade execution-quality review
+- [x] Persist factual post-trade execution reviews without numeric scoring
 
 ## Milestone 4 — Read-only account integration
 - [x] Bybit private API read-only client and env-based credentials

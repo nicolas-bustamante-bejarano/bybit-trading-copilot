@@ -58,6 +58,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 cp .env.example .env
+alembic upgrade head
 uvicorn trading_copilot.main:app --reload
 pytest
 ```
@@ -94,6 +95,23 @@ POST /execution/project-add
 - `POST /risk/portfolio`
 - `POST /execution/plan`
 - `POST /execution/project-add`
+- `POST /trade-plans`
+- `GET /trade-plans` and `GET/PATCH /trade-plans/{id}`
+- `POST/GET /trade-plans/{id}/snapshots`
+- `POST/GET /trade-plans/{id}/execution-events`
+- `POST/GET /trade-plans/{id}/review`
+
+## Persistent journal
+
+The journal uses SQLAlchemy's async API and Alembic. Local development defaults to SQLite;
+set `DATABASE_URL=postgresql+asyncpg://...` for Postgres or Supabase. Run migrations before
+starting the service. Decision snapshots and execution events expose create/list operations only
+and preserve the recorded history. Trade reviews record factual outcomes and confidence without a
+numeric quality score.
+
+Exchange stop fields remain account-risk proxies. Journal snapshot metadata should identify stop
+provenance as `execution_plan`, `exchange_order`, `inferred`, or `unknown`; the persistence layer
+does not infer that an exchange stop was the trader's original structural invalidation.
 
 ## Docs
 
