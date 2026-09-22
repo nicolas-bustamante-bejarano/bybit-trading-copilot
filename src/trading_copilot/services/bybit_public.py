@@ -39,3 +39,20 @@ class BybitPublicClient:
             {"category": "linear", "symbol": symbol, "limit": limit},
         )
         return result["list"]
+
+    async def open_interest(
+        self,
+        symbol: str,
+        interval: str = "5min",
+        limit: int = 50,
+    ) -> list[dict]:
+        result = await self._get(
+            "/v5/market/open-interest",
+            {
+                "category": "linear",
+                "symbol": symbol,
+                "intervalTime": interval,
+                "limit": limit,
+            },
+        )
+        return result["list"]
