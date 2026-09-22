@@ -4,6 +4,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
+.venv/
+*.db
+*.sqlite*
+__pycache__/
 .DS_Store
 *.sqlite3
 *.db

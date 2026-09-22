@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     live_stream_symbols: str = "BTCUSDT,ETHUSDT,BNBUSDT"
     default_account_equity: float = 5000.0
     default_max_portfolio_risk_pct: float = 0.02
+    database_url: str = "sqlite+aiosqlite:///./trading_copilot.db"
 
     @property
     def stream_symbols(self) -> list[str]:
