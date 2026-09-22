@@ -117,6 +117,8 @@ POST /execution/project-add
 - `POST/GET /trade-plans/{id}/execution-events`
 - `POST/GET /trade-plans/{id}/review`
 - `GET /positions/{symbol}/coach`
+- `GET /state-changes?symbol=BNBUSDT&limit=50`
+- `GET /state-change-monitor/status`
 
 ## Persistent journal
 
@@ -150,6 +152,33 @@ the known total is within the plan budget. It is `BREACH` when known risk exceed
 Missing plans and missing or stale live reaction data degrade safely to `HOLD` with adds blocked.
 The coach reports evidence and next conditions. It does not predict prices, place orders, or write
 journal events when queried.
+
+## State-change monitor and decision feed
+
+The optional background monitor compares a deliberately small projection of each position coach
+with the last persisted state. It records execution-state, add-permission, risk-policy, reaction,
+playbook, plan, thesis-warning, invalidation, and observed position open/closed transitions. Price,
+PnL, indicator, funding, open-interest, and equity ticks do not create events by themselves.
+
+The first successful observation for a symbol stores a silent baseline. It does not claim that a
+position opened while the service was offline. A later observed transition is written as one
+append-only state-change event. When a compatible active plan, open position, and real mark price
+exist, the same transaction also creates one automatic `DecisionSnapshot`; `action_taken` remains
+empty because coach state does not prove trader execution. Cursor update, event, and optional
+snapshot commit atomically and use a symbol/version uniqueness constraint for idempotency.
+
+Account failures never become position-close events, and failed or conflicting coach evaluations
+do not overwrite good cursor state. Enable the monitor explicitly:
+
+```bash
+STATE_CHANGE_MONITOR_ENABLED=true
+STATE_CHANGE_MONITOR_INTERVAL_SECONDS=5
+```
+
+The dashboard's **Recent state changes** panel polls the read-only feed every five seconds. The
+System page reports monitor status, and automatic snapshots appear in the existing Journal with an
+`AUTO SNAPSHOT` label. This layer adds observation and journaling only; it adds no exchange
+execution capability.
 
 ## Docs
 

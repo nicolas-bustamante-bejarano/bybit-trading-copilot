@@ -149,5 +149,48 @@ class RangeDefinitionRow(SymbolMixin, OptionalPlanChildBase, Base):
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
 
+class CoachStateCursorRow(SymbolMixin, Base):
+    __tablename__ = "coach_state_cursors"
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    position_open: Mapped[bool] = mapped_column(Boolean)
+    trade_plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("trade_plans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    version: Mapped[int] = mapped_column(default=1)
+    state: Mapped[dict] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class StateChangeEventRow(SymbolMixin, Base):
+    __tablename__ = "state_change_events"
+    __table_args__ = (
+        UniqueConstraint("symbol", "to_version", name="uq_state_change_symbol_version"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    trade_plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("trade_plans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    decision_snapshot_id: Mapped[str | None] = mapped_column(
+        ForeignKey("decision_snapshots.id", ondelete="SET NULL"), nullable=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    importance: Mapped[str] = mapped_column(String(16))
+    changes: Mapped[list] = mapped_column(JSON)
+    summary: Mapped[str] = mapped_column(Text)
+    state_before: Mapped[dict] = mapped_column(JSON)
+    state_after: Mapped[dict] = mapped_column(JSON)
+    from_version: Mapped[int] = mapped_column()
+    to_version: Mapped[int] = mapped_column()
+    confidence_status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 Index("ix_snapshots_plan_time", DecisionSnapshotRow.trade_plan_id, DecisionSnapshotRow.timestamp)
 Index("ix_events_plan_time", ExecutionEventRow.trade_plan_id, ExecutionEventRow.timestamp)
+Index("ix_state_changes_symbol_time", StateChangeEventRow.symbol, StateChangeEventRow.timestamp)
+Index(
+    "ix_state_changes_plan_time", StateChangeEventRow.trade_plan_id, StateChangeEventRow.timestamp
+)

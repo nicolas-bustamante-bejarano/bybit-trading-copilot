@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     default_account_equity: float = 5000.0
     default_max_portfolio_risk_pct: float = 0.02
     database_url: str = "sqlite+aiosqlite:///./trading_copilot.db"
+    state_change_monitor_enabled: bool = False
+    state_change_monitor_interval_seconds: float = 5.0
 
     @property
     def stream_symbols(self) -> list[str]:

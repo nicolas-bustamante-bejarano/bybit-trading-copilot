@@ -1,4 +1,4 @@
-import type { Account, AccountStatus, Coach, ExecutionEvent, Health, LiveStatus, Portfolio, Snapshot, TradePlan, TradeReview } from "./types";
+import type { Account, AccountStatus, Coach, ExecutionEvent, Health, LiveStatus, Portfolio, Snapshot, StateChange, StateChangeMonitorStatus, TradePlan, TradeReview } from "./types";
 
 const API_BASE = "/backend";
 
@@ -29,4 +29,6 @@ export const api = {
   getSnapshots: (id: string) => get<Snapshot[]>(`/trade-plans/${encodeURIComponent(id)}/snapshots`),
   getExecutionEvents: (id: string) => get<ExecutionEvent[]>(`/trade-plans/${encodeURIComponent(id)}/execution-events`),
   getTradeReview: (id: string) => get<TradeReview>(`/trade-plans/${encodeURIComponent(id)}/review`),
+  getStateChanges: (limit = 50) => get<StateChange[]>(`/state-changes?limit=${limit}`),
+  getStateChangeMonitorStatus: () => get<StateChangeMonitorStatus>("/state-change-monitor/status"),
 };

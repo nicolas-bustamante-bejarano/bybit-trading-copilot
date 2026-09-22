@@ -16,10 +16,12 @@ from trading_copilot.main import app
 from trading_copilot.persistence.database import get_session
 from trading_copilot.persistence.models import (
     Base,
+    CoachStateCursorRow,
     DecisionSnapshotRow,
     ExecutionRuleRow,
     FibDefinitionRow,
     RangeDefinitionRow,
+    StateChangeEventRow,
     TradePlanRow,
 )
 from trading_copilot.services.position_coach import evaluate_position_coach, load_coach_records
@@ -487,8 +489,9 @@ async def test_get_coach_performs_no_journal_writes(coach_client, monkeypatch):
     response = await client.get("/positions/bnbusdt/coach")
     assert response.status_code == 200
     async with sessions() as session:
-        count = await session.scalar(select(func.count()).select_from(DecisionSnapshotRow))
-        assert count == 0
+        for row_type in (DecisionSnapshotRow, StateChangeEventRow, CoachStateCursorRow):
+            count = await session.scalar(select(func.count()).select_from(row_type))
+            assert count == 0
 
 
 @pytest.mark.asyncio
