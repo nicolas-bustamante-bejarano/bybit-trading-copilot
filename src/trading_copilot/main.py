@@ -20,6 +20,7 @@ from trading_copilot.services.bybit_private import BybitReadOnlyClient
 from trading_copilot.services.bybit_ws import BybitLinearStream
 from trading_copilot.services.execution import project_add, summarize_execution_plan
 from trading_copilot.services.indicators import fib_retracements
+from trading_copilot.services.lifecycle import reconstruct_open_position_lifecycle
 from trading_copilot.services.live_market import LiveMarketStore
 from trading_copilot.services.market_snapshot import build_market_snapshot
 from trading_copilot.services.playbook import evaluate_playbook
@@ -52,7 +53,7 @@ async def lifespan(_: FastAPI):
                 await live_stream_task
 
 
-app = FastAPI(title="Bybit Trading Copilot", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="Bybit Trading Copilot", version="0.8.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -113,6 +114,25 @@ async def account_normalized() -> dict:
 async def portfolio_live() -> dict:
     try:
         return portfolio_live_view(await _normalized_account())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/positions/{symbol}/lifecycle")
+async def position_lifecycle(symbol: str) -> dict:
+    try:
+        account = await _normalized_account()
+        normalized_symbol = symbol.upper()
+        position = next(
+            (item for item in account.positions if item.symbol == normalized_symbol),
+            None,
+        )
+        if position is None:
+            raise HTTPException(status_code=404, detail=f"No open position for {normalized_symbol}")
+        lifecycle = reconstruct_open_position_lifecycle(position, account.recent_fills)
+        return lifecycle.model_dump(mode="json")
     except HTTPException:
         raise
     except Exception as exc:

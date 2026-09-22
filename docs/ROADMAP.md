@@ -56,7 +56,8 @@
 - [x] Never submit/cancel orders
 - [x] Normalize account snapshot into trading-domain entities
 - [x] Derive live structural portfolio risk from actual positions and stops
-- [ ] Reconstruct position lifecycle from execution history
+- [x] Reconstruct current position lifecycle from execution history
+- [ ] Paginate execution history beyond the first Bybit page
 - [ ] Automatic journal reconciliation
 - [ ] Persist account snapshots and normalized lifecycle events
 
