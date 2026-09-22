@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trading_copilot.api.journal import router as journal_router
@@ -18,9 +19,9 @@ from trading_copilot.domain.models import (
 from trading_copilot.domain.playbook import PlaybookEvaluationRequest
 from trading_copilot.domain.position_coach import PositionCoach
 from trading_copilot.persistence.database import get_session, session_factory
+from trading_copilot.persistence.models import TradePlanRow
 from trading_copilot.services.account_normalizer import (
     normalize_account_snapshot,
-    portfolio_live_view,
 )
 from trading_copilot.services.bybit_private import BybitReadOnlyClient
 from trading_copilot.services.bybit_ws import BybitLinearStream
@@ -34,6 +35,7 @@ from trading_copilot.services.position_coach import evaluate_position_coach, loa
 from trading_copilot.services.reaction import ReactionThresholds
 from trading_copilot.services.risk import max_position_size, portfolio_risk_summary
 from trading_copilot.services.state_change_monitor import StateChangeMonitor
+from trading_copilot.services.structural_risk import structural_risk_summary
 
 live_market = LiveMarketStore()
 live_stream: BybitLinearStream | None = None
@@ -193,9 +195,26 @@ async def account_normalized() -> dict:
 
 
 @app.get("/portfolio/live")
-async def portfolio_live() -> dict:
+async def portfolio_live(session: AsyncSession = Depends(get_session)) -> dict:
     try:
-        return portfolio_live_view(await _normalized_account())
+        account = await _normalized_account()
+        plans = list(
+            (
+                await session.scalars(
+                    select(TradePlanRow).where(TradePlanRow.lifecycle_status == "ACTIVE")
+                )
+            ).all()
+        )
+        unique: dict[str, TradePlanRow] = {}
+        ambiguous: set[str] = set()
+        for plan in plans:
+            if plan.symbol in unique:
+                ambiguous.add(plan.symbol)
+            else:
+                unique[plan.symbol] = plan
+        for symbol in ambiguous:
+            unique.pop(symbol, None)
+        return structural_risk_summary(account, unique)
     except HTTPException:
         raise
     except Exception as exc:

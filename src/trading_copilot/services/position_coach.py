@@ -34,6 +34,7 @@ from trading_copilot.persistence.models import (
     TradePlanRow,
 )
 from trading_copilot.services.playbook import evaluate_playbook
+from trading_copilot.services.structural_risk import structural_risk_positions
 
 SUPPORTED_ADD_CONDITIONS = {
     "CONTEXT_VALID",
@@ -200,23 +201,15 @@ def _risk(
     provenance: dict[str, str] = {}
     position_risk: Decimal | None = None
 
+    risk_items = {
+        item["symbol"]: item for item in structural_risk_positions(account, plans_by_symbol)
+    }
     for current in account.positions:
         if current.correlation_group != group:
             continue
-        current_plan = plans_by_symbol.get(current.symbol)
-        quantity = decimal(current.quantity) or Decimal()
-        entry = decimal(current.average_entry)
-        if current_plan is not None and entry is not None:
-            risk = quantity * abs(entry - current_plan.hard_invalidation)
-            provenance[current.symbol] = "execution_plan"
-        elif current.structural_risk_usdt is not None:
-            risk = decimal(current.structural_risk_usdt) or Decimal()
-            provenance[current.symbol] = (
-                "exchange_order" if current.stop_loss is not None else "inferred"
-            )
-        else:
-            risk = None
-            provenance[current.symbol] = "unknown"
+        item = risk_items[current.symbol]
+        risk = item["risk_usdt"]
+        provenance[current.symbol] = item["provenance"]
         if risk is None:
             incomplete.append(current.symbol)
         else:

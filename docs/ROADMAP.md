@@ -35,15 +35,18 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 - [x] Expose read-only state-change feed and monitor status APIs
 - [x] Show recent state changes, monitor status, and automatic snapshots in the frontend
 
-## PR #18 — Production Hosting Foundation
+## PR #18 — Production Hosting Foundation (current)
 
-- Railway project with `copilot-api`, `copilot-web`, and PostgreSQL
-- Persistent FastAPI backend and Next.js frontend services
-- GitHub automatic deployment and health checks
-- Alembic pre-deploy migration
-- Backend-only Bybit secrets and production configuration
-- One backend replica while market and order-book state remain process-local
-- One-command local development startup such as `make dev`
+- [x] Railway project configuration for `copilot-api`, `copilot-web`, and PostgreSQL
+- [x] Deterministic FastAPI and Next.js production containers
+- [x] Native GitHub auto-deploy preparation and health checks
+- [x] Alembic pre-deploy migration and production PostgreSQL fail-fast configuration
+- [x] Backend-only Bybit secrets and private API networking
+- [x] Signed-cookie single-user workstation access gate
+- [x] One backend replica while market and order-book state remain process-local
+- [x] Safe SQLite-to-PostgreSQL journal transfer utility
+- [x] Canonical plan-aware portfolio structural-risk summary
+- [x] One-command local development with `make dev`
 
 ## PR #19 — Live Trading Workspace
 

@@ -18,9 +18,10 @@ export interface Account {
 }
 export interface Portfolio {
   equity_usdt: number; available_balance_usdt: number | null; risk_policy_pct: number;
-  risk_budget_usdt: number; total_structural_risk_usdt: number; total_structural_risk_pct: number;
-  within_policy: boolean; unprotected_symbols: string[];
-  correlation_groups: Record<string, { risk_usdt: number; positions: string[]; unprotected: string[] }>;
+  risk_budget_usdt: number; known_structural_risk_usdt: number; known_structural_risk_pct: number | null;
+  total_structural_risk_pct: number | null; risk_policy_status: RiskStatus; unknown_symbols: string[];
+  provenance: Record<string, string>;
+  correlation_groups: Record<string, { known_risk_usdt: number; positions: string[]; unknown: string[] }>;
   positions: Position[];
 }
 export interface Coach {

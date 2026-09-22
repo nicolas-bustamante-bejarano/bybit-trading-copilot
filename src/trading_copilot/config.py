@@ -1,4 +1,13 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def normalize_database_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url.removeprefix("postgres://")
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+    return url
 
 
 class Settings(BaseSettings):
@@ -15,6 +24,15 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./trading_copilot.db"
     state_change_monitor_enabled: bool = False
     state_change_monitor_interval_seconds: float = 5.0
+
+    @model_validator(mode="after")
+    def validate_database(self):
+        self.database_url = normalize_database_url(self.database_url)
+        if self.app_env.lower() == "prod" and not self.database_url.startswith(
+            "postgresql+asyncpg://"
+        ):
+            raise ValueError("APP_ENV=prod requires a PostgreSQL DATABASE_URL")
+        return self
 
     @property
     def stream_symbols(self) -> list[str]:

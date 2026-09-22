@@ -186,3 +186,17 @@ execution capability.
 - [Microstructure](docs/MICROSTRUCTURE.md)
 - [Execution coach](docs/EXECUTION.md)
 - [Roadmap](docs/ROADMAP.md)
+
+## Production and local supervision
+
+Run both development services from one terminal:
+
+```bash
+make dev
+```
+
+The supervisor prefixes API/web output and stops both process groups on Ctrl+C. Local auth is explicitly disabled by the supervisor only outside production. `make test` runs backend lint/tests and frontend lint/build.
+
+Production targets Railway with a public authenticated Next.js service, a private one-replica FastAPI service, and PostgreSQL. The browser uses same-origin `/backend/...`; only the Next.js server reads `COPILOT_API_BASE_URL`. Production fails closed without PostgreSQL and frontend access secrets. See [Deployment](docs/DEPLOYMENT.md).
+
+The portfolio summary and position coach share the same plan-aware structural-risk calculation. Plan invalidations have `execution_plan` provenance, exchange stops retain `exchange_order`, and any unknown correlated exposure makes total risk `INDETERMINATE` rather than displaying a fabricated zero total.
