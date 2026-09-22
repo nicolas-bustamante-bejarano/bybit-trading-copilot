@@ -8,7 +8,15 @@ function EvidenceRow({ name, value, status }: { name: string; value: string | nu
   return <div className="flex items-center justify-between gap-3 border-b border-white/6 py-2 last:border-0"><div><div className="text-xs text-slate-500">{name}</div><div className="mt-0.5 text-xs text-slate-300">{label(value)}</div></div><StatusBadge value={status}/></div>;
 }
 export function PositionCoachCard({ position, coach, expanded=false }: { position: Position; coach: Coach; expanded?: boolean }) {
-  const pnl = position.unrealized_pnl ?? Number(coach.position.unrealized_pnl_usdt);
+  const pnl = position.unrealized_pnl ?? coach.position.unrealized_pnl_usdt;
+  const numericPnl = pnl === null || pnl === undefined || pnl === "" ? null : Number(pnl);
+  const pnlTone = numericPnl !== null && Number.isFinite(numericPnl)
+    ? numericPnl > 0
+      ? "text-emerald-300"
+      : numericPnl < 0
+        ? "text-rose-300"
+        : "text-slate-200"
+    : "text-slate-200";
   const SideIcon = position.side === "long" ? ArrowUpRight : ArrowDownRight;
   return <Panel className="overflow-hidden">
     <div className="-m-4 mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-white/8 bg-white/[.018] px-4 py-3">
@@ -16,7 +24,7 @@ export function PositionCoachCard({ position, coach, expanded=false }: { positio
       <div className="flex items-center gap-2"><StatusBadge value={coach.risk.policy_status}/><StatusBadge value={coach.execution.state}/></div>
     </div>
     <div className="grid grid-cols-2 gap-x-5 gap-y-3 md:grid-cols-4">
-      <Datum label="ENTRY" value={money(position.average_entry)}/><Datum label="MARK" value={money(position.mark_price)}/><Datum label="QUANTITY" value={number(position.quantity, 5)}/><Datum label="UNREALIZED PNL" value={money(pnl)} tone={pnl >= 0 ? "text-emerald-300" : "text-rose-300"}/>
+      <Datum label="ENTRY" value={money(position.average_entry)}/><Datum label="MARK" value={money(position.mark_price)}/><Datum label="QUANTITY" value={number(position.quantity, 5)}/><Datum label="UNREALIZED PNL" value={money(pnl)} tone={pnlTone}/>
     </div>
     <div className="my-4 h-px bg-white/8"/>
     <div className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
