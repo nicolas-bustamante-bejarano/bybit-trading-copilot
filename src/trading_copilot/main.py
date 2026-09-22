@@ -1,7 +1,8 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from trading_copilot.api.journal import router as journal_router
 from trading_copilot.config import settings
@@ -13,6 +14,8 @@ from trading_copilot.domain.models import (
     PositionRiskResult,
 )
 from trading_copilot.domain.playbook import PlaybookEvaluationRequest
+from trading_copilot.domain.position_coach import PositionCoach
+from trading_copilot.persistence.database import get_session
 from trading_copilot.services.account_normalizer import (
     normalize_account_snapshot,
     portfolio_live_view,
@@ -25,6 +28,7 @@ from trading_copilot.services.lifecycle import reconstruct_open_position_lifecyc
 from trading_copilot.services.live_market import LiveMarketStore
 from trading_copilot.services.market_snapshot import build_market_snapshot
 from trading_copilot.services.playbook import evaluate_playbook
+from trading_copilot.services.position_coach import evaluate_position_coach, load_coach_records
 from trading_copilot.services.reaction import ReactionThresholds
 from trading_copilot.services.risk import max_position_size, portfolio_risk_summary
 
@@ -137,6 +141,59 @@ async def position_lifecycle(symbol: str) -> dict:
             raise HTTPException(status_code=404, detail=f"No open position for {normalized_symbol}")
         lifecycle = reconstruct_open_position_lifecycle(position, account.recent_fills)
         return lifecycle.model_dump(mode="json")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/positions/{symbol}/coach", response_model=PositionCoach)
+async def position_coach(
+    symbol: str, session: AsyncSession = Depends(get_session)
+) -> PositionCoach:
+    try:
+        normalized_symbol = symbol.upper()
+        account = await _normalized_account()
+        position = next(
+            (item for item in account.positions if item.symbol == normalized_symbol), None
+        )
+        if position is None:
+            raise HTTPException(status_code=404, detail=f"No open position for {normalized_symbol}")
+        try:
+            plan, rules, fibs, ranges, plans_by_symbol = await load_coach_records(
+                session, normalized_symbol
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if plan and plan.side.upper() != position.side.value.upper():
+            raise HTTPException(
+                status_code=409,
+                detail="Active trade plan side does not match the live position side",
+            )
+        lifecycle = reconstruct_open_position_lifecycle(position, account.recent_fills)
+        try:
+            market = await build_market_snapshot(normalized_symbol)
+        except Exception:  # noqa: BLE001 - market evidence degrades to missing
+            market = None
+        live = None
+        if live_market.has_data(normalized_symbol):
+            live = live_market.state(normalized_symbol)
+            reaction = live_market.reaction_state(normalized_symbol, 60_000)
+            live["reaction_1m"] = reaction["reaction"]
+            if reaction["bar"]:
+                live["timestamp_ms"] = reaction["bar"]["end_ms"]
+        return evaluate_position_coach(
+            position=position,
+            account=account,
+            lifecycle=lifecycle,
+            plan=plan,
+            rules=rules,
+            plans_by_symbol=plans_by_symbol,
+            market=market,
+            live=live,
+            fibs=fibs,
+            ranges=ranges,
+        )
     except HTTPException:
         raise
     except Exception as exc:
