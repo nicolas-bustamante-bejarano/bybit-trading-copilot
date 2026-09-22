@@ -12,6 +12,10 @@ from trading_copilot.domain.models import (
     PositionRiskResult,
 )
 from trading_copilot.domain.playbook import PlaybookEvaluationRequest
+from trading_copilot.services.account_normalizer import (
+    normalize_account_snapshot,
+    portfolio_live_view,
+)
 from trading_copilot.services.bybit_private import BybitReadOnlyClient
 from trading_copilot.services.bybit_ws import BybitLinearStream
 from trading_copilot.services.execution import project_add, summarize_execution_plan
@@ -48,7 +52,7 @@ async def lifespan(_: FastAPI):
                 await live_stream_task
 
 
-app = FastAPI(title="Bybit Trading Copilot", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Bybit Trading Copilot", version="0.7.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -77,10 +81,38 @@ def _read_only_client() -> BybitReadOnlyClient:
     )
 
 
+async def _normalized_account():
+    snapshot = await _read_only_client().account_snapshot()
+    return normalize_account_snapshot(
+        snapshot,
+        max_group_risk_pct=settings.default_max_portfolio_risk_pct,
+    )
+
+
 @app.get("/account/snapshot")
 async def account_snapshot() -> dict:
     try:
         return await _read_only_client().account_snapshot()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/account/normalized")
+async def account_normalized() -> dict:
+    try:
+        return (await _normalized_account()).model_dump(mode="json")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/portfolio/live")
+async def portfolio_live() -> dict:
+    try:
+        return portfolio_live_view(await _normalized_account())
     except HTTPException:
         raise
     except Exception as exc:

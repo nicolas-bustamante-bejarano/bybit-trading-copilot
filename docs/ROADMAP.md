@@ -54,8 +54,11 @@
 - [x] Bybit private API read-only client and env-based credentials
 - [x] Import positions, fills/executions, open stops/TP orders, wallet snapshot
 - [x] Never submit/cancel orders
-- [ ] Normalize account snapshot into journal/execution entities
+- [x] Normalize account snapshot into trading-domain entities
+- [x] Derive live structural portfolio risk from actual positions and stops
+- [ ] Reconstruct position lifecycle from execution history
 - [ ] Automatic journal reconciliation
+- [ ] Persist account snapshots and normalized lifecycle events
 
 ## Milestone 5 — Cross-venue context
 - [ ] Binance
