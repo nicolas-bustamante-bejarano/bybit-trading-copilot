@@ -5,6 +5,8 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trading_copilot.api.journal import router as journal_router
+from trading_copilot.api.state_changes import router as state_changes_router
+from trading_copilot.api.state_changes import set_status_provider
 from trading_copilot.config import settings
 from trading_copilot.domain.execution import AddProjectionRequest, ExecutionPlanRequest
 from trading_copilot.domain.models import (
@@ -15,7 +17,7 @@ from trading_copilot.domain.models import (
 )
 from trading_copilot.domain.playbook import PlaybookEvaluationRequest
 from trading_copilot.domain.position_coach import PositionCoach
-from trading_copilot.persistence.database import get_session
+from trading_copilot.persistence.database import get_session, session_factory
 from trading_copilot.services.account_normalizer import (
     normalize_account_snapshot,
     portfolio_live_view,
@@ -31,15 +33,18 @@ from trading_copilot.services.playbook import evaluate_playbook
 from trading_copilot.services.position_coach import evaluate_position_coach, load_coach_records
 from trading_copilot.services.reaction import ReactionThresholds
 from trading_copilot.services.risk import max_position_size, portfolio_risk_summary
+from trading_copilot.services.state_change_monitor import StateChangeMonitor
 
 live_market = LiveMarketStore()
 live_stream: BybitLinearStream | None = None
 live_stream_task: asyncio.Task | None = None
+state_change_monitor: StateChangeMonitor | None = None
+state_change_monitor_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global live_stream, live_stream_task
+    global live_stream, live_stream_task, state_change_monitor, state_change_monitor_task
     if settings.live_stream_enabled:
         live_stream = BybitLinearStream(
             settings.stream_symbols,
@@ -47,6 +52,16 @@ async def lifespan(_: FastAPI):
             orderbook_depth=50,
         )
         live_stream_task = asyncio.create_task(live_stream.run(live_market.handle))
+    state_change_monitor = StateChangeMonitor(
+        enabled=settings.state_change_monitor_enabled,
+        interval_seconds=settings.state_change_monitor_interval_seconds,
+        sessions=session_factory,
+        fetch_account=_normalized_account,
+        compose_coach=compose_monitored_position_coach,
+    )
+    set_status_provider(state_change_monitor.status)
+    if settings.state_change_monitor_enabled:
+        state_change_monitor_task = asyncio.create_task(state_change_monitor.run())
     try:
         yield
     finally:
@@ -56,10 +71,15 @@ async def lifespan(_: FastAPI):
             live_stream_task.cancel()
             with suppress(asyncio.CancelledError):
                 await live_stream_task
+        if state_change_monitor_task is not None:
+            state_change_monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await state_change_monitor_task
 
 
 app = FastAPI(title="Bybit Trading Copilot", version="0.8.0", lifespan=lifespan)
 app.include_router(journal_router)
+app.include_router(state_changes_router)
 
 
 @app.get("/health")
@@ -95,6 +115,60 @@ async def _normalized_account():
     return normalize_account_snapshot(
         snapshot,
         max_group_risk_pct=settings.default_max_portfolio_risk_pct,
+    )
+
+
+async def compose_position_coach(
+    account,
+    position,
+    session: AsyncSession,
+    *,
+    degrade_market_failure: bool = True,
+    require_live_data: bool = False,
+) -> PositionCoach:
+    normalized_symbol = position.symbol.upper()
+    plan, rules, fibs, ranges, plans_by_symbol = await load_coach_records(
+        session, normalized_symbol
+    )
+    if plan and plan.side.upper() != position.side.value.upper():
+        raise ValueError("Active trade plan side does not match the live position side")
+    lifecycle = reconstruct_open_position_lifecycle(position, account.recent_fills)
+    try:
+        market = await build_market_snapshot(normalized_symbol)
+    except Exception:
+        if not degrade_market_failure:
+            raise
+        market = None
+    live = None
+    if require_live_data and not live_market.has_data(normalized_symbol):
+        raise RuntimeError(f"Live market state unavailable for {normalized_symbol}")
+    if live_market.has_data(normalized_symbol):
+        live = live_market.state(normalized_symbol)
+        reaction = live_market.reaction_state(normalized_symbol, 60_000)
+        live["reaction_1m"] = reaction["reaction"]
+        if reaction["bar"]:
+            live["timestamp_ms"] = reaction["bar"]["end_ms"]
+    return evaluate_position_coach(
+        position=position,
+        account=account,
+        lifecycle=lifecycle,
+        plan=plan,
+        rules=rules,
+        plans_by_symbol=plans_by_symbol,
+        market=market,
+        live=live,
+        fibs=fibs,
+        ranges=ranges,
+    )
+
+
+async def compose_monitored_position_coach(account, position, session: AsyncSession) -> PositionCoach:
+    return await compose_position_coach(
+        account,
+        position,
+        session,
+        degrade_market_failure=False,
+        require_live_data=settings.live_stream_enabled,
     )
 
 
@@ -160,40 +234,9 @@ async def position_coach(
         if position is None:
             raise HTTPException(status_code=404, detail=f"No open position for {normalized_symbol}")
         try:
-            plan, rules, fibs, ranges, plans_by_symbol = await load_coach_records(
-                session, normalized_symbol
-            )
+            return await compose_position_coach(account, position, session)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if plan and plan.side.upper() != position.side.value.upper():
-            raise HTTPException(
-                status_code=409,
-                detail="Active trade plan side does not match the live position side",
-            )
-        lifecycle = reconstruct_open_position_lifecycle(position, account.recent_fills)
-        try:
-            market = await build_market_snapshot(normalized_symbol)
-        except Exception:  # noqa: BLE001 - market evidence degrades to missing
-            market = None
-        live = None
-        if live_market.has_data(normalized_symbol):
-            live = live_market.state(normalized_symbol)
-            reaction = live_market.reaction_state(normalized_symbol, 60_000)
-            live["reaction_1m"] = reaction["reaction"]
-            if reaction["bar"]:
-                live["timestamp_ms"] = reaction["bar"]["end_ms"]
-        return evaluate_position_coach(
-            position=position,
-            account=account,
-            lifecycle=lifecycle,
-            plan=plan,
-            rules=rules,
-            plans_by_symbol=plans_by_symbol,
-            market=market,
-            live=live,
-            fibs=fibs,
-            ranges=ranges,
-        )
     except HTTPException:
         raise
     except Exception as exc:
