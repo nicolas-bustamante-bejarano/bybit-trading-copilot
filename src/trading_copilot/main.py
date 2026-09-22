@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Query
 
+from trading_copilot.api.journal import router as journal_router
 from trading_copilot.config import settings
 from trading_copilot.domain.execution import AddProjectionRequest, ExecutionPlanRequest
 from trading_copilot.domain.models import (
@@ -54,6 +55,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Bybit Trading Copilot", version="0.8.0", lifespan=lifespan)
+app.include_router(journal_router)
 
 
 @app.get("/health")
@@ -74,7 +76,9 @@ def _read_only_client() -> BybitReadOnlyClient:
     if not settings.bybit_read_only_sync_enabled:
         raise HTTPException(status_code=503, detail="Read-only Bybit account sync is disabled")
     if not settings.has_read_only_credentials:
-        raise HTTPException(status_code=503, detail="Read-only Bybit credentials are not configured")
+        raise HTTPException(
+            status_code=503, detail="Read-only Bybit credentials are not configured"
+        )
     return BybitReadOnlyClient(
         api_key=settings.bybit_api_key or "",
         api_secret=settings.bybit_api_secret or "",
