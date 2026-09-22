@@ -38,12 +38,17 @@
 - [ ] Alerts only when setup state changes
 
 ## Milestone 3 — Execution coach
-- [ ] Trade lifecycle
-- [ ] Probe/add/reduce plan
-- [ ] Hard invalidation + thesis-warning levels
-- [ ] R-multiple and TP ladder calculations
-- [ ] Block adds that exceed risk budget
-- [ ] Correlated exposure warnings
+- [x] Execution lifecycle metadata
+- [x] Multi-fill weighted entry
+- [x] Hard invalidation + thesis-warning levels
+- [x] R-multiple and TP ladder calculations
+- [x] Project proposed adds before execution
+- [x] Block adds that exceed correlation-group risk budget
+- [x] Block adds when predefined confirmation is absent
+- [x] Correlated exposure warnings through shared risk bucket
+- [ ] Persist trade plans and lifecycle events
+- [ ] Reduce/stop-management policy after targets are reached
+- [ ] Automatic post-trade execution-quality review
 
 ## Milestone 4 — Read-only account integration
 - [ ] Bybit private API read-only credentials

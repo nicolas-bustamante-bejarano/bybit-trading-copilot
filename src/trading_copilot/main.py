@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, HTTPException, Query
 
 from trading_copilot.config import settings
+from trading_copilot.domain.execution import AddProjectionRequest, ExecutionPlanRequest
 from trading_copilot.domain.models import (
     FibRequest,
     PortfolioRiskRequest,
@@ -12,6 +13,7 @@ from trading_copilot.domain.models import (
 )
 from trading_copilot.domain.playbook import PlaybookEvaluationRequest
 from trading_copilot.services.bybit_ws import BybitLinearStream
+from trading_copilot.services.execution import project_add, summarize_execution_plan
 from trading_copilot.services.indicators import fib_retracements
 from trading_copilot.services.live_market import LiveMarketStore
 from trading_copilot.services.market_snapshot import build_market_snapshot
@@ -45,7 +47,7 @@ async def lifespan(_: FastAPI):
                 await live_stream_task
 
 
-app = FastAPI(title="Bybit Trading Copilot", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Bybit Trading Copilot", version="0.5.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -108,6 +110,22 @@ def playbook_evaluate(request: PlaybookEvaluationRequest) -> dict:
         if live_reaction_state is not None:
             request = request.model_copy(update={"reaction_state": live_reaction_state["state"]})
     return evaluate_playbook(request)
+
+
+@app.post("/execution/plan")
+def execution_plan(request: ExecutionPlanRequest) -> dict:
+    try:
+        return summarize_execution_plan(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/execution/project-add")
+def execution_project_add(request: AddProjectionRequest) -> dict:
+    try:
+        return project_add(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/market/{symbol}/snapshot")

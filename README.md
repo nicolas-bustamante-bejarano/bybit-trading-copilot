@@ -17,7 +17,9 @@ A decision-support and execution-discipline system for discretionary crypto trad
 - Stoch RSI: 14 / 14 / 3 / 3
 - Range trading
 - Bybit market data: klines, trades, L2 order book, funding, open interest
-- Manual trade plans and execution journal
+- Trend Pullback / Range Long / Range Short playbooks
+- Setup state machine instead of a numeric score
+- Manual execution plans and risk-gated adds
 - Portfolio risk budget with correlated-position awareness
 
 ## Live market intelligence
@@ -36,8 +38,18 @@ Derived state currently includes:
 - 60-second book additions/removals
 - near-term bid/ask replenishment
 - current funding and open interest
+- 1s / 1m feature bars
+- buy/sell absorption and continuation hypotheses from flow-vs-price response
 
 Book removals are deliberately labelled **removed**, not **cancelled**: L2 deltas alone cannot prove whether size disappeared because it was cancelled or filled.
+
+## Playbook and execution layers
+
+The playbook engine returns explicit states such as `CONTEXT_VALID`, `AT_LOCATION`, `WAITING_FOR_TRIGGER`, and `READY`. A level is treated as a location, never as an automatic entry.
+
+The execution coach then evaluates structural risk, multi-fill weighted entry, take-profit R-multiples, correlated exposure, and proposed scale-ins. An add is policy-compliant only when its predefined confirmation is met and projected risk remains inside the configured correlation-group budget.
+
+The service never sends exchange orders.
 
 ## Quick start
 
@@ -63,20 +75,29 @@ Then query, for example:
 
 ```text
 GET /live/BNBUSDT/state
-GET /live/ETHUSDT/state
-GET /live/status
+GET /live/ETHUSDT/reaction
+POST /playbook/evaluate
+POST /execution/plan
+POST /execution/project-add
 ```
 
-## Initial API
+## API
 
 - `GET /health`
 - `GET /live/status`
 - `GET /live/{symbol}/state`
+- `GET /live/{symbol}/reaction`
 - `GET /market/{symbol}/snapshot`
+- `POST /analysis/fib`
+- `POST /playbook/evaluate`
 - `POST /risk/position-size`
 - `POST /risk/portfolio`
-- `POST /analysis/fib`
+- `POST /execution/plan`
+- `POST /execution/project-add`
 
-## Roadmap
+## Docs
 
-See [docs/ROADMAP.md](docs/ROADMAP.md).
+- [Playbooks](docs/PLAYBOOKS.md)
+- [Microstructure](docs/MICROSTRUCTURE.md)
+- [Execution coach](docs/EXECUTION.md)
+- [Roadmap](docs/ROADMAP.md)
