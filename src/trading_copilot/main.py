@@ -10,10 +10,12 @@ from trading_copilot.domain.models import (
     PositionRiskRequest,
     PositionRiskResult,
 )
+from trading_copilot.domain.playbook import PlaybookEvaluationRequest
 from trading_copilot.services.bybit_ws import BybitLinearStream
 from trading_copilot.services.indicators import fib_retracements
 from trading_copilot.services.live_market import LiveMarketStore
 from trading_copilot.services.market_snapshot import build_market_snapshot
+from trading_copilot.services.playbook import evaluate_playbook
 from trading_copilot.services.reaction import ReactionThresholds
 from trading_copilot.services.risk import max_position_size, portfolio_risk_summary
 
@@ -43,7 +45,7 @@ async def lifespan(_: FastAPI):
                 await live_stream_task
 
 
-app = FastAPI(title="Bybit Trading Copilot", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Bybit Trading Copilot", version="0.4.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -97,6 +99,15 @@ def live_reaction(
         min_continuation_progress_bps=min_continuation_progress_bps,
     )
     return live_market.reaction_state(symbol, interval_ms, thresholds)
+
+
+@app.post("/playbook/evaluate")
+def playbook_evaluate(request: PlaybookEvaluationRequest) -> dict:
+    if request.reaction_state is None and live_market.has_data(request.symbol):
+        live_reaction_state = live_market.reaction_state(request.symbol, 60_000).get("reaction")
+        if live_reaction_state is not None:
+            request = request.model_copy(update={"reaction_state": live_reaction_state["state"]})
+    return evaluate_playbook(request)
 
 
 @app.get("/market/{symbol}/snapshot")

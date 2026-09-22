@@ -28,10 +28,13 @@
 > Note: raw L2 size reductions are stored as `removed`, not blindly called `cancelled`, because an order-book delta alone cannot prove whether size was cancelled or executed.
 
 ## Milestone 2 — Playbook engine
-- [ ] Manual Fib anchor UI/API
-- [ ] Range definitions
-- [ ] Trend Pullback / Range Long / Range Short
-- [ ] Setup state machine
+- [x] Manual Fib anchors in evaluation API
+- [x] Manual range definitions in evaluation API
+- [x] Trend Pullback / Range Long / Range Short
+- [x] Setup state machine
+- [x] Evidence-first conditions with no numeric score
+- [ ] Persist watched setups and manual Fib/range definitions
+- [ ] Detect trigger/reclaim events from lower-timeframe price action
 - [ ] Alerts only when setup state changes
 
 ## Milestone 3 — Execution coach
