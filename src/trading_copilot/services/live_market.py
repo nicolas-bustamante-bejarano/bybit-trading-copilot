@@ -4,7 +4,9 @@ import time
 from collections import defaultdict
 from typing import Any
 
+from trading_copilot.services.feature_bars import MultiIntervalFeatureBars
 from trading_copilot.services.orderbook import LocalOrderBook, RollingBookChanges
+from trading_copilot.services.reaction import ReactionThresholds, classify_reaction
 from trading_copilot.services.trade_flow import RollingTradeFlow, TradePrint
 
 
@@ -16,6 +18,7 @@ class LiveMarketStore:
         self.book_changes: dict[str, RollingBookChanges] = defaultdict(RollingBookChanges)
         self.trade_flows: dict[str, RollingTradeFlow] = defaultdict(RollingTradeFlow)
         self.tickers: dict[str, dict[str, Any]] = {}
+        self.feature_bars = MultiIntervalFeatureBars()
 
     def handle(self, message: dict[str, Any]) -> None:
         topic = message.get("topic", "")
@@ -43,6 +46,7 @@ class LiveMarketStore:
                 sequence=sequence,
                 timestamp_ms=timestamp_ms,
             )
+            self.feature_bars.on_book(symbol, timestamp_ms, book)
             return
 
         event = book.apply_delta(
@@ -53,25 +57,38 @@ class LiveMarketStore:
             timestamp_ms=timestamp_ms,
         )
         self.book_changes[symbol].add(event)
+        self.feature_bars.on_book(symbol, timestamp_ms, book, event)
 
     def _handle_trades(self, message: dict[str, Any]) -> None:
         for raw in message.get("data", []):
             symbol = raw["s"].upper()
+            timestamp_ms = int(raw["T"])
+            side = raw["S"]
+            price = float(raw["p"])
+            size = float(raw["v"])
             self.trade_flows[symbol].add(
                 TradePrint(
-                    timestamp_ms=int(raw["T"]),
-                    side=raw["S"],
-                    price=float(raw["p"]),
-                    size=float(raw["v"]),
+                    timestamp_ms=timestamp_ms,
+                    side=side,
+                    price=price,
+                    size=size,
                 )
             )
+            self.feature_bars.on_trade(symbol, timestamp_ms, side, price, size)
 
     def _handle_ticker(self, message: dict[str, Any]) -> None:
         data = message.get("data") or {}
         symbol = (data.get("symbol") or message.get("topic", "").split(".")[-1]).upper()
+        timestamp_ms = int(message.get("ts") or time.time() * 1000)
         current = self.tickers.setdefault(symbol, {})
         current.update(data)
-        current["updated_at_ms"] = int(message.get("ts") or time.time() * 1000)
+        current["updated_at_ms"] = timestamp_ms
+        self.feature_bars.on_ticker(
+            symbol,
+            timestamp_ms,
+            open_interest=_float_or_none(current.get("openInterest")),
+            funding_rate=_float_or_none(current.get("fundingRate")),
+        )
 
     def has_data(self, symbol: str) -> bool:
         symbol = symbol.upper()
@@ -79,6 +96,30 @@ class LiveMarketStore:
 
     def active_symbols(self) -> list[str]:
         return sorted(set(self.books) | set(self.tickers) | set(self.trade_flows))
+
+    def reaction_state(
+        self,
+        symbol: str,
+        interval_ms: int = 60_000,
+        thresholds: ReactionThresholds | None = None,
+    ) -> dict[str, Any]:
+        symbol = symbol.upper()
+        aggregator = self.feature_bars.get(symbol, interval_ms)
+        bar = aggregator.latest_completed() or aggregator.current_snapshot()
+        if bar is None:
+            return {
+                "symbol": symbol,
+                "interval_ms": interval_ms,
+                "reaction": None,
+                "bar": None,
+            }
+        assessment = classify_reaction(bar, thresholds)
+        return {
+            "symbol": symbol,
+            "interval_ms": interval_ms,
+            "reaction": assessment.as_dict(),
+            "bar": bar.as_dict(),
+        }
 
     def state(self, symbol: str, now_ms: int | None = None) -> dict[str, Any]:
         symbol = symbol.upper()
@@ -123,6 +164,11 @@ class LiveMarketStore:
             "funding_rate": _float_or_none(ticker.get("fundingRate")),
             "orderbook": orderbook_payload,
             "trade_flow_60s": self.trade_flows[symbol].snapshot(now_ms),
+            "feature_bars": {
+                "1s": self.feature_bars.snapshot(symbol, 1_000),
+                "1m": self.feature_bars.snapshot(symbol, 60_000),
+            },
+            "reaction_1m": self.reaction_state(symbol, 60_000)["reaction"],
         }
 
 

@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from trading_copilot.config import settings
 from trading_copilot.domain.models import (
@@ -14,6 +14,7 @@ from trading_copilot.services.bybit_ws import BybitLinearStream
 from trading_copilot.services.indicators import fib_retracements
 from trading_copilot.services.live_market import LiveMarketStore
 from trading_copilot.services.market_snapshot import build_market_snapshot
+from trading_copilot.services.reaction import ReactionThresholds
 from trading_copilot.services.risk import max_position_size, portfolio_risk_summary
 
 live_market = LiveMarketStore()
@@ -42,7 +43,7 @@ async def lifespan(_: FastAPI):
                 await live_stream_task
 
 
-app = FastAPI(title="Bybit Trading Copilot", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Bybit Trading Copilot", version="0.3.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -59,8 +60,7 @@ def live_status() -> dict:
     }
 
 
-@app.get("/live/{symbol}/state")
-def live_state(symbol: str) -> dict:
+def _require_live_symbol(symbol: str) -> str:
     symbol = symbol.upper()
     if not live_market.has_data(symbol):
         raise HTTPException(
@@ -70,7 +70,33 @@ def live_state(symbol: str) -> dict:
                 "in LIVE_STREAM_SYMBOLS."
             ),
         )
-    return live_market.state(symbol)
+    return symbol
+
+
+@app.get("/live/{symbol}/state")
+def live_state(symbol: str) -> dict:
+    return live_market.state(_require_live_symbol(symbol))
+
+
+@app.get("/live/{symbol}/reaction")
+def live_reaction(
+    symbol: str,
+    interval_ms: int = Query(default=60_000),
+    min_total_notional: float = Query(default=25_000.0, ge=0),
+    min_flow_imbalance: float = Query(default=0.30, ge=0, le=1),
+    max_absorption_progress_bps: float = Query(default=3.0, ge=0),
+    min_continuation_progress_bps: float = Query(default=5.0, ge=0),
+) -> dict:
+    symbol = _require_live_symbol(symbol)
+    if interval_ms not in {1_000, 60_000}:
+        raise HTTPException(status_code=400, detail="interval_ms must be 1000 or 60000")
+    thresholds = ReactionThresholds(
+        min_total_notional=min_total_notional,
+        min_flow_imbalance=min_flow_imbalance,
+        max_absorption_progress_bps=max_absorption_progress_bps,
+        min_continuation_progress_bps=min_continuation_progress_bps,
+    )
+    return live_market.reaction_state(symbol, interval_ms, thresholds)
 
 
 @app.get("/market/{symbol}/snapshot")
