@@ -51,7 +51,7 @@ def test_trend_pullback_rejects_wrong_higher_timeframe_regime():
 def test_trend_pullback_can_be_approaching_location():
     result = evaluate_playbook(
         trend_request(
-            price=138.5,
+            price=162.0,
             reaction_state=None,
             stoch_k=60,
             stoch_d=55,
