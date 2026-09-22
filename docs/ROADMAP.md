@@ -1,6 +1,6 @@
 # Roadmap
 
-## Milestone 0 — Foundation (this commit)
+## Milestone 0 — Foundation
 - [x] FastAPI service
 - [x] Bybit public REST client
 - [x] 12/21 EMA
@@ -11,14 +11,18 @@
 - [x] 1H/4H market snapshot
 
 ## Milestone 1 — Live Bybit intelligence
-- [ ] WebSocket collector for public trades
-- [ ] WebSocket L2 order-book reconstruction
-- [ ] Depth bands: 10/25/50 bps
-- [ ] Aggressive buy/sell delta
-- [ ] Add/cancel/replenishment metrics
-- [ ] Open-interest ingestion
-- [ ] Funding history
-- [ ] Store 1s/1m derived liquidity features
+- [x] WebSocket collector for public trades
+- [x] WebSocket L2 order-book reconstruction
+- [x] Depth bands: 10/25/50 bps
+- [x] Aggressive buy/sell delta
+- [x] Book add/remove/replenishment metrics
+- [x] Open-interest ingestion
+- [x] Funding history + live funding state
+- [ ] Persist 1s/1m derived liquidity features
+- [ ] Absorption / failed-auction detector
+- [ ] Short-term price-response features for flow-vs-price divergence
+
+> Note: raw L2 size reductions are stored as `removed`, not blindly called `cancelled`, because an order-book delta alone cannot prove whether size was cancelled or executed.
 
 ## Milestone 2 — Playbook engine
 - [ ] Manual Fib anchor UI/API
