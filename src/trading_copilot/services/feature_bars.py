@@ -88,11 +88,12 @@ class FeatureBarAggregator:
         self.interval_ms = interval_ms
         self.history: deque[FeatureBar] = deque(maxlen=history_size)
         self.current: FeatureBar | None = None
+        self.late_event_count = 0
 
     def _bucket_start(self, timestamp_ms: int) -> int:
         return timestamp_ms - (timestamp_ms % self.interval_ms)
 
-    def _ensure_bar(self, timestamp_ms: int) -> FeatureBar:
+    def _ensure_bar(self, timestamp_ms: int) -> FeatureBar | None:
         start = self._bucket_start(timestamp_ms)
         if self.current is None:
             self.current = FeatureBar(
@@ -110,7 +111,8 @@ class FeatureBarAggregator:
                 end_ms=start + self.interval_ms,
             )
         elif start < self.current.start_ms:
-            raise RuntimeError("out-of-order feature-bar event")
+            self.late_event_count += 1
+            return None
         return self.current
 
     def on_book(
@@ -120,6 +122,8 @@ class FeatureBarAggregator:
         changes: BookChangeStats | None = None,
     ) -> None:
         bar = self._ensure_bar(timestamp_ms)
+        if bar is None:
+            return
         if book.mid_price is not None:
             mid = float(book.mid_price)
             if bar.mid_open is None:
@@ -143,6 +147,8 @@ class FeatureBarAggregator:
 
     def on_trade(self, timestamp_ms: int, side: str, price: float, size: float) -> None:
         bar = self._ensure_bar(timestamp_ms)
+        if bar is None:
+            return
         notional = price * size
         normalized_side = side.lower()
         if normalized_side == "buy":
@@ -160,6 +166,8 @@ class FeatureBarAggregator:
         funding_rate: float | None,
     ) -> None:
         bar = self._ensure_bar(timestamp_ms)
+        if bar is None:
+            return
         if open_interest is not None:
             if bar.open_interest_open is None:
                 bar.open_interest_open = open_interest
@@ -180,6 +188,8 @@ class MultiIntervalFeatureBars:
         self._aggregators: dict[tuple[str, int], FeatureBarAggregator] = {}
 
     def _for(self, symbol: str, interval_ms: int) -> FeatureBarAggregator:
+        if interval_ms not in self.intervals_ms:
+            raise ValueError(f"unsupported interval_ms: {interval_ms}")
         key = (symbol.upper(), interval_ms)
         if key not in self._aggregators:
             self._aggregators[key] = FeatureBarAggregator(symbol, interval_ms)
@@ -221,12 +231,16 @@ class MultiIntervalFeatureBars:
                 funding_rate=funding_rate,
             )
 
+    def get(self, symbol: str, interval_ms: int) -> FeatureBarAggregator:
+        return self._for(symbol, interval_ms)
+
     def snapshot(self, symbol: str, interval_ms: int) -> dict[str, Any]:
         aggregator = self._for(symbol, interval_ms)
         completed = aggregator.latest_completed()
         current = aggregator.current_snapshot()
         return {
             "interval_ms": interval_ms,
+            "late_event_count": aggregator.late_event_count,
             "latest_completed": completed.as_dict() if completed else None,
             "current": current.as_dict() if current else None,
         }
