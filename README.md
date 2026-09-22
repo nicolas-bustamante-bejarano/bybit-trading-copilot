@@ -100,6 +100,7 @@ POST /execution/project-add
 - `POST/GET /trade-plans/{id}/snapshots`
 - `POST/GET /trade-plans/{id}/execution-events`
 - `POST/GET /trade-plans/{id}/review`
+- `GET /positions/{symbol}/coach`
 
 ## Persistent journal
 
@@ -112,6 +113,22 @@ numeric quality score.
 Exchange stop fields remain account-risk proxies. Journal snapshot metadata should identify stop
 provenance as `execution_plan`, `exchange_order`, `inferred`, or `unknown`; the persistence layer
 does not infer that an exchange stop was the trader's original structural invalidation.
+
+## Live position coach
+
+`GET /positions/{symbol}/coach` combines the current read-only Bybit position, active journal
+plan, account and correlation-group risk, 1H/4H market structure, persisted location definitions,
+and live reaction evidence. Its open-position state precedence is `INVALIDATE`, explicit
+`EXIT/REDUCE`, eligible `ADD`, then `HOLD`.
+
+Risk policy is `PASS` only when all material correlated positions have known structural risk and
+the known total is within the plan budget. It is `BREACH` when known risk exceeds that budget and
+`INDETERMINATE` when risk data or a plan budget is incomplete. Plan invalidations have
+`execution_plan` provenance; exchange-derived stops retain their separate provenance.
+
+Missing plans and missing or stale live reaction data degrade safely to `HOLD` with adds blocked.
+The coach reports evidence and next conditions. It does not predict prices, place orders, or write
+journal events when queried.
 
 ## Docs
 

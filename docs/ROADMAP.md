@@ -67,6 +67,13 @@
 - [ ] Venue divergence
 - [ ] Dynamic price-discovery weighting
 
+## Milestone 4.5 — Live position coach
+- [x] Compose read-only position, active plan, market context, reaction, and portfolio risk
+- [x] Evidence-first `HOLD` / `ADD` / `REDUCE` / `EXIT` / `INVALIDATE` response
+- [x] `PASS` / `BREACH` / `INDETERMINATE` risk semantics with stop provenance
+- [x] Safe degradation for missing plans and stale or unavailable market evidence
+- [ ] State-change snapshot automation and alerts
+
 ## Research lab (separate from production playbook)
 - [ ] Calendar seasonality
 - [ ] Rosh Hashanah → Yom Kippur window
