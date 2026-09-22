@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Iterable
 
-
-ZERO = Decimal("0")
-TEN_THOUSAND = Decimal("10000")
+ZERO = Decimal(0)
+TEN_THOUSAND = Decimal(10000)
 
 
 @dataclass(slots=True)
@@ -180,7 +179,7 @@ class LocalOrderBook:
         ask = self.best_ask
         if bid is None or ask is None:
             return None
-        return (bid + ask) / Decimal("2")
+        return (bid + ask) / Decimal(2)
 
     @property
     def spread_bps(self) -> Decimal | None:
@@ -196,8 +195,8 @@ class LocalOrderBook:
         if mid is None:
             return ZERO, ZERO
         band = Decimal(bps) / TEN_THOUSAND
-        bid_floor = mid * (Decimal("1") - band)
-        ask_ceiling = mid * (Decimal("1") + band)
+        bid_floor = mid * (Decimal(1) - band)
+        ask_ceiling = mid * (Decimal(1) + band)
         bid_qty = sum(qty for price, qty in self.bids.items() if price >= bid_floor)
         ask_qty = sum(qty for price, qty in self.asks.items() if price <= ask_ceiling)
         return bid_qty, ask_qty
@@ -207,8 +206,8 @@ class LocalOrderBook:
         if mid is None:
             return ZERO, ZERO
         band = Decimal(bps) / TEN_THOUSAND
-        bid_floor = mid * (Decimal("1") - band)
-        ask_ceiling = mid * (Decimal("1") + band)
+        bid_floor = mid * (Decimal(1) - band)
+        ask_ceiling = mid * (Decimal(1) + band)
         bid_notional = sum(price * qty for price, qty in self.bids.items() if price >= bid_floor)
         ask_notional = sum(price * qty for price, qty in self.asks.items() if price <= ask_ceiling)
         return bid_notional, ask_notional
