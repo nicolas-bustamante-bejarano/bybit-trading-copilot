@@ -1,0 +1,19 @@
+{
+  "symbol": "ETHUSDT",
+  "playbook": "trend_pullback",
+  "side": "long",
+  "price": 2655.0,
+  "regime_1h": "uptrend",
+  "regime_4h": "uptrend",
+  "stoch_k": 24.0,
+  "stoch_d": 19.0,
+  "prev_stoch_k": 14.0,
+  "prev_stoch_d": 18.0,
+  "fib": {
+    "swing_low": 2400.0,
+    "swing_high": 2800.0
+  },
+  "reaction_state": "sell_absorption",
+  "trigger_confirmed": false,
+  "invalidation_breached": false
+}
