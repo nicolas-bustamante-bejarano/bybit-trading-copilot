@@ -22,13 +22,14 @@ from trading_copilot.domain.playbook import PlaybookEvaluationRequest
 from trading_copilot.domain.position_coach import PositionCoach
 from trading_copilot.domain.workspace import SizingRequest
 from trading_copilot.persistence.database import get_session, session_factory
-from trading_copilot.persistence.models import TradePlanRow
+from trading_copilot.persistence.models import DecisionSnapshotRow, ExecutionEventRow, TradePlanRow
 from trading_copilot.services.account_normalizer import (
     normalize_account_snapshot,
 )
 from trading_copilot.services.bybit_private import BybitReadOnlyClient
 from trading_copilot.services.bybit_public import BybitPublicClient
 from trading_copilot.services.bybit_ws import BybitLinearStream
+from trading_copilot.services.chart import aggregate_daily_to_3d
 from trading_copilot.services.execution import project_add, summarize_execution_plan
 from trading_copilot.services.indicators import fib_retracements
 from trading_copilot.services.lifecycle import reconstruct_open_position_lifecycle
@@ -359,8 +360,7 @@ async def market_chart(
     try:
         rows = await BybitPublicClient().klines(symbol.upper(), intervals[timeframe], limit * (3 if timeframe == "3D" else 1))
         if timeframe == "3D":
-            grouped = [rows[i : i + 3] for i in range(0, len(rows), 3) if len(rows[i : i + 3]) == 3]
-            rows = [[g[0][0], g[0][1], str(max(Decimal(x[2]) for x in g)), str(min(Decimal(x[3]) for x in g)), g[-1][4], str(sum(Decimal(x[5]) for x in g))] for g in grouped]
+            rows = aggregate_daily_to_3d(rows)
         from trading_copilot.services.indicators import ema
 
         closes = [float(row[4]) for row in rows]
@@ -378,11 +378,52 @@ async def market_chart(
 async def workspace_sizing(request: SizingRequest, session: AsyncSession = Depends(get_session)) -> dict:
     try:
         account = await _normalized_account()
-        active = list((await session.scalars(select(TradePlanRow).where(TradePlanRow.lifecycle_status == "ACTIVE"))).all())
-        unique = {plan.symbol: plan for plan in active}
+        active = list(
+            (await session.scalars(select(TradePlanRow).where(TradePlanRow.lifecycle_status == "ACTIVE"))).all()
+        )
+        matching = [plan for plan in active if plan.symbol == request.symbol.upper()]
+        if len(matching) > 1:
+            raise HTTPException(409, "Multiple active trade plans exist for this symbol")
+        plan = matching[0] if matching else None
+        if plan is not None and plan.side.upper() != request.side:
+            raise HTTPException(409, "Active trade plan side does not match sizing request")
+        if request.trade_plan_id is not None and (plan is None or plan.id != request.trade_plan_id):
+            raise HTTPException(409, "Requested trade plan is not the single active plan for this symbol")
+        if plan is not None:
+            request = request.model_copy(
+                update={
+                    "max_risk_percent": plan.max_risk_percent,
+                    "correlation_group": plan.correlation_group,
+                    "stages": _plan_stages(plan),
+                }
+            )
+        if not request.correlation_group:
+            raise HTTPException(422, "Correlation group is required when no active trade plan exists")
+        unique: dict[str, TradePlanRow] = {}
+        ambiguous: set[str] = set()
+        for active_plan in active:
+            if active_plan.symbol in unique:
+                ambiguous.add(active_plan.symbol)
+            else:
+                unique[active_plan.symbol] = active_plan
+        for symbol in ambiguous:
+            unique.pop(symbol, None)
         risk = structural_risk_summary(account, unique)
-        group = request.correlation_group or "DEFAULT"
+        group = request.correlation_group
         group_data = risk["correlation_groups"].get(group, {"known_risk_usdt": Decimal(), "unknown": []})
+        if plan is not None:
+            events = list(
+                (await session.scalars(select(ExecutionEventRow).where(ExecutionEventRow.trade_plan_id == plan.id).order_by(ExecutionEventRow.timestamp))).all()
+            )
+            executed = [event for event in events if event.event_type in {"PROBE", "ADD"}]
+            if executed:
+                last = executed[-1]
+                snapshot = await session.get(DecisionSnapshotRow, last.decision_snapshot_id) if last.decision_snapshot_id else None
+                request = request.model_copy(update={
+                    "completed_stage_count": len(executed),
+                    "prior_stage_baseline_trusted": snapshot is not None,
+                    "prior_evidence": snapshot.evidence_present if snapshot else [],
+                })
         instrument = await BybitPublicClient().instrument(request.symbol.upper())
         lot = instrument.get("lotSizeFilter", {})
         return build_sizing_plan(
@@ -396,6 +437,16 @@ async def workspace_sizing(request: SizingRequest, session: AsyncSession = Depen
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _plan_stages(plan: TradePlanRow):
+    """Read explicit plan stages only; do not invent a 50/50 add schedule."""
+    from trading_copilot.domain.workspace import SizingStage
+
+    configured = (plan.entry_probe_plan or {}).get("stages", [])
+    if not configured:
+        return [SizingStage(name="PROBE", allocation=Decimal(1), required_evidence=[])]
+    return [SizingStage.model_validate(stage) for stage in configured]
 
 
 @app.post("/analysis/fib")

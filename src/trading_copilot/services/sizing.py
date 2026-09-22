@@ -37,16 +37,25 @@ def build_sizing_plan(
     stages = []
     seen = set(request.prior_evidence)
     current = set(request.current_evidence)
-    for stage in request.stages:
+    cumulative_qty = Decimal()
+    cumulative_risk = Decimal()
+    for index, stage in enumerate(request.stages):
         required = set(stage.required_evidence)
         missing = sorted(required - current)
         novel = required - seen
         reasons = list(base_reasons)
+        if index > request.completed_stage_count:
+            reasons.append("Previous stage has not been recorded as executed")
+        if stage.name != "PROBE" and not request.prior_stage_baseline_trusted:
+            reasons.append("No trustworthy evidence baseline exists after the previous stage")
         if stage.name != "PROBE" and required and not novel:
             reasons.append("Add requires evidence not already used by an earlier stage")
         if missing:
             reasons.append("Missing required evidence: " + ", ".join(missing))
         stage_qty = floor_step(quantity * stage.allocation, qty_step)
+        stage_risk = stage_qty * total_unit_risk
+        cumulative_qty += stage_qty
+        cumulative_risk += stage_risk
         allowed = constraints_ok and permitted > 0 and not reasons
         stages.append({
             "state": stage.name, "allocation": stage.allocation, "quantity": stage_qty,
@@ -54,6 +63,10 @@ def build_sizing_plan(
             "status": "PASS" if allowed else ("INDETERMINATE" if group_unknown else "LOCKED"),
             "reasons": reasons,
             "required_evidence": sorted(required), "evidence_present": sorted(required & current),
+            "stage_risk_usdt": stage_risk, "cumulative_quantity": cumulative_qty,
+            "cumulative_risk_usdt": cumulative_risk,
+            "remaining_unlockable_risk_usdt": max(Decimal(), permitted - cumulative_risk),
+            "remaining_unlockable_quantity": max(Decimal(), quantity - cumulative_qty),
         })
         seen |= required & current
     suggested = None
@@ -68,8 +81,10 @@ def build_sizing_plan(
         "stop_distance": unit_risk, "fee_and_slippage_per_unit": friction,
         "maximum_quantity": quantity, "maximum_notional": notional,
         "qty_step": qty_step, "min_qty": min_qty, "min_notional": min_notional,
-        "suggested_min_leverage": suggested, "selected_leverage": leverage,
+        "minimum_leverage_for_margin_fit": suggested, "selected_leverage": leverage,
         "estimated_margin_usdt": (notional / leverage) if leverage else None,
+        "margin_percent_equity": (notional / leverage / equity) if leverage and equity else None,
+        "liquidation_status": "UNAVAILABLE",
         "leverage_note": "Leverage changes estimated margin only; it never increases allowed risk quantity.",
         "stages": stages,
     }

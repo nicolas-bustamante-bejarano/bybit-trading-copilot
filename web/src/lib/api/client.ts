@@ -39,6 +39,7 @@ export const api = {
   getChart: (symbol: string, timeframe: string) => get<Chart>(`/market/${encodeURIComponent(symbol)}/chart?timeframe=${timeframe}`),
   getChartStructures: (symbol: string) => get<ChartStructure[]>(`/chart-structures?symbol=${encodeURIComponent(symbol)}`),
   createChartStructure: (body: Record<string, unknown>) => mutate<ChartStructure>("/chart-structures", "POST", body),
+  patchChartStructure: (id: string, body: Record<string, unknown>) => mutate<ChartStructure>(`/chart-structures/${encodeURIComponent(id)}`, "PATCH", body),
   deleteChartStructure: (id: string) => mutate<void>(`/chart-structures/${encodeURIComponent(id)}`, "DELETE"),
   createPlan: (body: Record<string, unknown>) => mutate<TradePlan>("/trade-plans", "POST", body),
   patchPlan: (id: string, body: Record<string, unknown>) => mutate<TradePlan>(`/trade-plans/${encodeURIComponent(id)}`, "PATCH", body),

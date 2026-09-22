@@ -41,6 +41,16 @@ async def patch_structure(
         raise HTTPException(404, "Chart structure not found")
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(row, key, value)
+    try:
+        StructureCreate(
+            symbol=row.symbol, timeframe=row.timeframe, structure_type=row.structure_type,
+            label=row.label, lower_price=row.lower_price, upper_price=row.upper_price,
+            anchor_one_time=row.anchor_one_time, anchor_one_price=row.anchor_one_price,
+            anchor_two_time=row.anchor_two_time, anchor_two_price=row.anchor_two_price,
+            active=row.active,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     await session.commit()
     await session.refresh(row)
     return dump(row)

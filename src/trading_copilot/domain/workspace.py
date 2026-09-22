@@ -34,9 +34,14 @@ class StructureCreate(BaseModel):
 
 
 class StructurePatch(BaseModel):
+    timeframe: str | None = None
     label: str | None = None
     lower_price: Decimal | None = None
     upper_price: Decimal | None = None
+    anchor_one_time: int | None = None
+    anchor_one_price: Decimal | None = None
+    anchor_two_time: int | None = None
+    anchor_two_price: Decimal | None = None
     active: bool | None = None
 
 
@@ -52,10 +57,13 @@ class SizingRequest(BaseModel):
     entry: Decimal = Field(gt=0)
     hard_invalidation: Decimal = Field(gt=0)
     max_risk_percent: Decimal = Field(gt=0, le=1)
-    correlation_group: str | None = None
+    correlation_group: str | None = Field(default=None, min_length=1)
+    trade_plan_id: str | None = None
     stages: list[SizingStage] = Field(default_factory=lambda: [SizingStage(name="PROBE", allocation=Decimal(1))])
     current_evidence: list[str] = Field(default_factory=list)
     prior_evidence: list[str] = Field(default_factory=list)
+    prior_stage_baseline_trusted: bool = False
+    completed_stage_count: int = Field(default=0, ge=0)
     fee_bps: Decimal = Field(default=Decimal(6), ge=0)
     slippage_bps: Decimal = Field(default=Decimal(3), ge=0)
     requested_leverage: Decimal | None = Field(default=None, gt=0)
