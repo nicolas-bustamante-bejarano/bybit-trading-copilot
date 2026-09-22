@@ -65,6 +65,22 @@ pytest
 
 Then open `http://127.0.0.1:8000/docs`.
 
+### Frontend workstation
+
+The read-only Next.js dashboard lives in `web/` and talks only to this FastAPI service. It never
+receives Bybit credentials and provides no order, cancellation, transfer, or withdrawal actions.
+
+```bash
+cd web
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+Set `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000` when the backend runs at its default address,
+then open `http://localhost:3000`. The Next.js development server proxies typed browser requests to
+FastAPI so exchange connectivity and credentials remain server-side.
+
 To enable the live collector, set:
 
 ```bash
