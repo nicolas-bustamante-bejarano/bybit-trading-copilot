@@ -8,6 +8,14 @@ import type { Fib, Range } from "./fib-range-editor";
 
 const markerEvents = new Set(["REACTION_DEVELOPING", "REACTION_CONFIRMED", "THESIS_WARNING", "RISK_BREACH", "ADD_ALLOWED", "ADD_LOCKED", "REDUCE", "EXIT", "INVALIDATE"]);
 
+export function markersForChart(changes: StateChange[], symbol: string) {
+  return changes.flatMap((change) => {
+    const timestamp = Date.parse(change.timestamp);
+    if (change.symbol !== symbol || !markerEvents.has(change.event_type) || !Number.isFinite(timestamp)) return [];
+    return [{ time: Math.floor(timestamp / 1000) as never, position: "belowBar" as const, color: "#f59e0b", shape: "circle" as const, text: change.event_type }];
+  });
+}
+
 export function PriceChart({ chart, plan, structures, changes, fib, range }: { chart: Chart | null; plan: TradePlan | null; structures: ChartStructure[]; changes: StateChange[]; fib: Fib | null; range: Range | null }) {
   const root = useRef<HTMLDivElement>(null);
   const view = useRef<any>(null);
@@ -31,12 +39,8 @@ export function PriceChart({ chart, plan, structures, changes, fib, range }: { c
   }, [chart]);
 
   useEffect(() => {
-    markerPlugin.current?.setMarkers(changes.flatMap((change) => {
-      const timestamp = Date.parse(change.timestamp);
-      if (!markerEvents.has(change.event_type) || !Number.isFinite(timestamp)) return [];
-      return [{ time: Math.floor(timestamp / 1000) as never, position: "belowBar" as const, color: "#f59e0b", shape: "circle" as const, text: change.event_type }];
-    }));
-  }, [changes]);
+    markerPlugin.current?.setMarkers(markersForChart(changes, chart?.symbol ?? ""));
+  }, [changes, chart?.symbol]);
 
   useEffect(() => {
     if (!bars.current || !view.current) return;
@@ -50,7 +54,9 @@ export function PriceChart({ chart, plan, structures, changes, fib, range }: { c
       addLine((plan.entry_probe_plan as Record<string, unknown>).entry, "ENTRY");
       addLine(plan.thesis_warning, "WARNING");
       addLine(plan.hard_invalidation, "INVALIDATION");
-      plan.target_ladder.forEach((target, index) => addLine(target.price, `TP${index + 1}`));
+      [...plan.target_ladder]
+        .sort((left, right) => Number(left.ordering) - Number(right.ordering))
+        .forEach((target, index) => addLine(target.price, `TP${index + 1}`));
     }
     Object.entries(fib?.levels ?? {}).forEach(([ratio, price]) => addLine(price, `Fib ${ratio}`));
     if (range) {

@@ -15,17 +15,21 @@ export function FibRangeEditor({ plan, onChange }: { plan: TradePlan | null; onC
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+    setFib(null); setRange(null); setMessage(""); onChange(null, null);
     if (!plan) {
-      setFib(null); setRange(null); setMessage(""); onChange(null, null);
-      return;
+      return () => { cancelled = true; };
     }
     Promise.all([api.getFibs(plan.id), api.getRanges(plan.id)]).then(([fibs, ranges]) => {
+      if (cancelled) return;
       const nextFib = (fibs[0] as Fib | undefined) ?? null;
       const nextRange = (ranges[0] as Range | undefined) ?? null;
       setFib(nextFib); setRange(nextRange); setMessage(""); onChange(nextFib, nextRange);
     }).catch(() => {
+      if (cancelled) return;
       setFib(null); setRange(null); onChange(null, null); setMessage("Definitions could not load");
     });
+    return () => { cancelled = true; };
   // The parent supplies an inline state bridge; fetching follows the selected plan only.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan]);
