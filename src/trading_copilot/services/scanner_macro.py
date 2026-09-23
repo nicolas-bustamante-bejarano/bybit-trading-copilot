@@ -82,10 +82,10 @@ def _previous_acceptance_matches(
         and bool(accepted_at)
         and isinstance(accepted_count, int)
         and not isinstance(accepted_count, bool)
-        and accepted_count >= 1
         and isinstance(accepted_bars, int)
         and not isinstance(accepted_bars, bool)
         and accepted_bars >= 1
+        and accepted_count >= accepted_bars
         and previous_state.get("accepted_structure_id") == structure_id
         and previous_state.get("accepted_side") == side.value.upper()
         and isinstance(accepted_level, (int, float))

@@ -49,7 +49,7 @@ def fib(plan_id: str) -> FibDefinitionRow:
         id=f"fib-{plan_id}",
         trade_plan_id=plan_id,
         symbol="BTCUSDT",
-        direction="UP",
+        direction="LONG",
         swing_low=Decimal(100),
         swing_high=Decimal(120),
     )
@@ -145,6 +145,45 @@ def test_trend_multiple_compatible_unlinked_plans_are_ambiguous():
     assert result.reason == "AMBIGUOUS_STRUCTURE"
 
 
+def test_trend_fib_child_with_wrong_symbol_is_rejected():
+    compatible = plan("plan-1")
+    stale = fib(compatible.id)
+    stale.symbol = "ETHUSDT"
+
+    result = resolve_trend([compatible], [stale])
+
+    assert result.reason == "STRUCTURE_REQUIRED"
+    assert result.trade_plan_id == compatible.id
+
+
+def test_trend_fib_child_with_wrong_direction_is_rejected():
+    compatible = plan("plan-1")
+    stale = fib(compatible.id)
+    stale.direction = "SHORT"
+
+    result = resolve_trend([compatible], [stale])
+
+    assert result.reason == "STRUCTURE_REQUIRED"
+    assert result.trade_plan_id == compatible.id
+
+
+def test_explicit_linked_plan_with_stale_child_does_not_fall_through():
+    linked = plan("plan-1")
+    alternative = plan("plan-2")
+    stale = fib(linked.id)
+    stale.symbol = "ETHUSDT"
+
+    result = resolve_trend(
+        [linked, alternative],
+        [stale, fib(alternative.id)],
+        linked.id,
+    )
+
+    assert result.reason == "STRUCTURE_REQUIRED"
+    assert result.trade_plan_id == linked.id
+    assert result.fib is None
+
+
 def test_range_explicit_compatible_linked_plan_resolves_range():
     linked = plan("plan-1", setup_type="RANGE_LONG")
     result = resolve_range([linked], [range_definition(linked.id)], linked.id)
@@ -203,6 +242,17 @@ def test_range_multiple_compatible_unlinked_plans_are_ambiguous():
     result = resolve_range(plans, [range_definition(item.id) for item in plans])
 
     assert result.reason == "AMBIGUOUS_STRUCTURE"
+
+
+def test_range_child_with_wrong_symbol_is_rejected():
+    compatible = plan("plan-1", setup_type="RANGE_LONG")
+    stale = range_definition(compatible.id)
+    stale.symbol = "ETHUSDT"
+
+    result = resolve_range([compatible], [stale])
+
+    assert result.reason == "STRUCTURE_REQUIRED"
+    assert result.trade_plan_id == compatible.id
 
 
 def structure(

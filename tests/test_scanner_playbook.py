@@ -49,7 +49,7 @@ def fib(plan_id: str) -> FibDefinitionRow:
         id=f"fib-{plan_id}",
         trade_plan_id=plan_id,
         symbol="BTCUSDT",
-        direction="UP",
+        direction="LONG",
         swing_low=Decimal(100),
         swing_high=Decimal(200),
     )
@@ -280,6 +280,8 @@ def test_unreachable_execution_states_are_clamped(monkeypatch, unexpected):
 def test_short_scanner_playbooks_are_adapted(setup_type, plan_side, plan_setup, price, regime):
     compatible = plan("plan-1", side=plan_side, setup_type=plan_setup)
     definition = fib(compatible.id) if "TREND" in setup_type else range_definition(compatible.id)
+    if isinstance(definition, FibDefinitionRow):
+        definition.direction = plan_side
 
     result = scanner_playbook.evaluate_scanner_playbook(
         watched=watched(setup_type),

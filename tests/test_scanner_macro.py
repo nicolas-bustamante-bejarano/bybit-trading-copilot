@@ -185,6 +185,34 @@ def test_same_structure_retains_acceptance_memory():
     assert result.state == accepted_state()
 
 
+def test_accepted_memory_requires_enough_recorded_closes():
+    malformed = {
+        **accepted_state(),
+        "accepted_close_count": 1,
+        "acceptance_bars": 2,
+    }
+
+    result = evaluate(
+        current_price=110,
+        previous_status=ScannerStatus.BREAKOUT_ACCEPTED,
+        previous_state=malformed,
+    )
+
+    assert result.status == ScannerStatus.BREAKOUT_ATTEMPT
+    assert result.accepted_at is None
+
+
+def test_valid_accepted_memory_with_sufficient_closes_survives():
+    result = evaluate(
+        current_price=110,
+        previous_status=ScannerStatus.BREAKOUT_ACCEPTED,
+        previous_state=accepted_state(),
+    )
+
+    assert result.status == ScannerStatus.RETEST_PENDING
+    assert result.accepted_at == NOW.isoformat()
+
+
 def test_new_structure_does_not_inherit_acceptance_memory():
     result = evaluate(
         current_price=110,

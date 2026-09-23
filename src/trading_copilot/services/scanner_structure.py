@@ -57,7 +57,16 @@ def resolve_plan_structure(
     if not watched.trade_plan_id and len(selected) != 1:
         return StructureResolution(reason="AMBIGUOUS_STRUCTURE")
     plan = selected[0]
-    found = [item for item in defs if item.trade_plan_id == plan.id]
+    found = [
+        item
+        for item in defs
+        if item.trade_plan_id == plan.id
+        and item.symbol == plan.symbol
+        and (
+            not isinstance(item, FibDefinitionRow)
+            or item.direction.upper() == side.upper()
+        )
+    ]
     if len(found) != 1:
         return StructureResolution(reason="STRUCTURE_REQUIRED", trade_plan_id=plan.id)
     value = found[0]
