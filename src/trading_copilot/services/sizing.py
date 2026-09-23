@@ -34,6 +34,16 @@ def build_sizing_plan(
         base_reasons.append("Rounded quantity does not meet exchange minimums")
     if not quantity:
         base_reasons.append("Risk budget does not permit a tradable quantity")
+    if not request.stages:
+        return {
+            "symbol": request.symbol.upper(), "risk_budget_usdt": budget,
+            "group_risk_used_usdt": group_risk, "group_risk_remaining_usdt": remaining,
+            "permitted_risk_usdt": permitted, "risk_per_unit_usdt": total_unit_risk,
+            "stop_distance": unit_risk, "maximum_quantity": quantity, "maximum_notional": notional,
+            "stages": [{"state": "UNCONFIGURED", "allowed": False, "status": "LOCKED", "reasons": ["No explicit staged execution schedule exists in the trade plan"]}],
+            "minimum_leverage_for_margin_fit": None, "estimated_margin_usdt": None,
+            "liquidation_status": "UNAVAILABLE",
+        }
     stages = []
     seen = set(request.prior_evidence)
     current = set(request.current_evidence)

@@ -57,3 +57,11 @@ def test_add_requires_recorded_prior_stage_and_trusted_baseline_then_new_evidenc
     unlocked_request = request.model_copy(update={"completed_stage_count": 1, "prior_stage_baseline_trusted": True})
     unlocked = build_sizing_plan(unlocked_request, equity=Decimal(10000), available_margin=Decimal(500), group_risk=Decimal(), group_unknown=False, qty_step=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional=Decimal(5))
     assert unlocked["stages"][1]["allowed"] is True
+
+
+def test_missing_schedule_is_locked_while_explicit_full_probe_is_allowed():
+    base = {"symbol": "BTCUSDT", "side": "LONG", "entry": "100", "hard_invalidation": "95", "max_risk_percent": "0.01"}
+    missing = build_sizing_plan(SizingRequest(**base, stages=[]), equity=Decimal(10000), available_margin=Decimal(500), group_risk=Decimal(), group_unknown=False, qty_step=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional=Decimal(5))
+    explicit = build_sizing_plan(SizingRequest(**base, stages=[SizingStage(name="PROBE", allocation="1")]), equity=Decimal(10000), available_margin=Decimal(500), group_risk=Decimal(), group_unknown=False, qty_step=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional=Decimal(5))
+    assert missing["stages"][0]["state"] == "UNCONFIGURED"
+    assert explicit["stages"][0]["allowed"] is True

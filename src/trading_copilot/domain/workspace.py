@@ -45,6 +45,17 @@ class StructurePatch(BaseModel):
     active: bool | None = None
 
 
+class FibDefinitionInput(BaseModel):
+    direction: Literal["LONG", "SHORT"]
+    swing_low: Decimal
+    swing_high: Decimal
+
+
+class RangeDefinitionInput(BaseModel):
+    range_low: Decimal
+    range_high: Decimal
+
+
 class SizingStage(BaseModel):
     name: Literal["PROBE", "ADD_1", "ADD_2", "FULL_SIZE"]
     allocation: Decimal = Field(gt=0, le=1)

@@ -2,9 +2,13 @@ from decimal import Decimal
 
 
 def aggregate_daily_to_3d(rows: list[list[str]]) -> list[list[str]]:
-    """Normalize Bybit daily candles to chronological order before three-day aggregation."""
+    """UTC-align three-day bars to Unix-epoch day buckets, independent of fetch window."""
     ordered = sorted(rows, key=lambda row: int(row[0]))
-    groups = [ordered[index : index + 3] for index in range(0, len(ordered), 3)]
+    buckets: dict[int, list[list[str]]] = {}
+    for row in ordered:
+        day = int(row[0]) // 86_400_000
+        buckets.setdefault(day - day % 3, []).append(row)
+    groups = [buckets[key] for key in sorted(buckets)]
     return [
         [
             group[0][0], group[0][1], str(max(Decimal(item[2]) for item in group)),
