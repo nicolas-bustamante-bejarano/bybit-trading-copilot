@@ -247,5 +247,18 @@ async def test_fib_and_range_definitions_persist_and_read_back(journal_client):
     fib = await journal_client.put(f"/trade-plans/{plan['id']}/fib-definition", json={"direction": "LONG", "swing_low": "100", "swing_high": "200"})
     range_ = await journal_client.put(f"/trade-plans/{plan['id']}/range-definition", json={"range_low": "110", "range_high": "190"})
     assert fib.status_code == range_.status_code == 200
-    assert (await journal_client.get(f"/trade-plans/{plan['id']}/fib-definitions")).json()[0]["symbol"] == "ETHUSDT"
+    stored_fib = (await journal_client.get(f"/trade-plans/{plan['id']}/fib-definitions")).json()[0]
+    assert stored_fib["symbol"] == "ETHUSDT"
+    assert stored_fib["levels"]["0.000"] == 200
     assert (await journal_client.get(f"/trade-plans/{plan['id']}/range-definitions")).json()[0]["range_low"] == 110
+
+
+@pytest.mark.asyncio
+async def test_short_fib_zero_is_swing_low(journal_client):
+    plan = await _create_plan(journal_client, "BTCUSDT")
+    response = await journal_client.put(
+        f"/trade-plans/{plan['id']}/fib-definition",
+        json={"direction": "SHORT", "swing_low": "100", "swing_high": "200"},
+    )
+    assert response.status_code == 200
+    assert response.json()["levels"]["0.000"] == 100
