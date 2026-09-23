@@ -146,6 +146,34 @@ async def test_cycle_skips_disabled_rows_and_isolates_failed_symbol(sessions):
 
 
 @pytest.mark.asyncio
+async def test_partial_setup_failure_marks_symbol_evaluated_and_failed_once(sessions):
+    async with sessions() as session:
+        session.add(watchlist("BTCUSDT"))
+        await session.commit()
+
+    async def builder(symbol, evaluated_at):
+        return snapshot(symbol)
+
+    async def composer(session, item, shared_snapshot):
+        return SymbolEvaluationOutcome(
+            results=[result(item.symbol)] * 5,
+            failed_setups={"MACRO_BREAKOUT_SHORT": "accepted structure unavailable"},
+        )
+
+    item = monitor(sessions, builder, composer)
+    await item.run_cycle()
+    status = item.status()
+
+    assert status.evaluated_symbols == ["BTCUSDT"]
+    assert status.failed_symbols == ["BTCUSDT"]
+    assert len(status.evaluated_symbols) == len(set(status.evaluated_symbols))
+    assert len(status.failed_symbols) == len(set(status.failed_symbols))
+    assert status.setup_count == 5
+    assert status.last_success_at == status.last_cycle_started_at
+    assert "BTCUSDT/MACRO_BREAKOUT_SHORT: accepted structure unavailable" in status.last_error
+
+
+@pytest.mark.asyncio
 async def test_snapshot_failure_leaves_existing_candidate_and_transitions_untouched(sessions):
     async with sessions() as session:
         session.add_all(

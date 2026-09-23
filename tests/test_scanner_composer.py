@@ -220,8 +220,116 @@ async def test_existing_macro_acceptance_state_reaches_macro_evaluator(sessions)
         outcome = await evaluate_symbol(
             session, watchlist("MACRO_BREAKOUT_LONG"), snapshot(price=120)
         )
+        persisted = await session.scalar(
+            select(WatchedSetupRow).where(
+                WatchedSetupRow.setup_type == "MACRO_BREAKOUT_LONG"
+            )
+        )
 
     assert outcome.results[0].status == ScannerStatus.RETEST_PENDING
+    assert {
+        key: persisted.state[key]
+        for key in (
+            "accepted_at",
+            "accepted_breakout_level",
+            "accepted_structure_id",
+            "accepted_close_count",
+            "acceptance_bars",
+            "accepted_side",
+        )
+    } == accepted
+
+
+@pytest.mark.asyncio
+async def test_macro_persisted_state_contains_canonical_decision_evidence(sessions):
+    async with sessions() as session:
+        session.add(
+            ChartStructureRow(
+                id="macro-zone",
+                symbol="BTCUSDT",
+                timeframe="1D",
+                structure_type="HORIZONTAL_ZONE",
+                label="daily resistance",
+                lower_price=Decimal(95),
+                upper_price=Decimal(100),
+                active=True,
+            )
+        )
+        await session.commit()
+        await evaluate_symbol(
+            session,
+            watchlist("MACRO_BREAKOUT_LONG"),
+            snapshot(price=101, closes=(99,)),
+        )
+        persisted = await session.scalar(select(WatchedSetupRow))
+
+    assert persisted.state == {
+        "symbol": "BTCUSDT",
+        "setup_type": "MACRO_BREAKOUT_LONG",
+        "side": "LONG",
+        "status": "BREAKOUT_ATTEMPT",
+        "price": 101.0,
+        "evaluated_at": NOW.isoformat(),
+        "structure": {
+            "structure_id": "macro-zone",
+            "label": "daily resistance",
+            "type": "HORIZONTAL_ZONE",
+            "breakout_level": 100.0,
+        },
+        "distance_bps": 100.0,
+        "qualifying_close_count": 0,
+        "required_acceptance_bars": 2,
+        "blocking_reasons": [],
+        "next_conditions": ["await completed 1H close beyond structure"],
+        "data_status": "PARTIAL",
+    }
+
+
+@pytest.mark.asyncio
+async def test_macro_transition_preserves_canonical_before_and_after_snapshots(sessions):
+    async with sessions() as session:
+        session.add(
+            ChartStructureRow(
+                id="macro-zone",
+                symbol="BTCUSDT",
+                timeframe="1D",
+                structure_type="HORIZONTAL_ZONE",
+                label="daily resistance",
+                lower_price=Decimal(95),
+                upper_price=Decimal(100),
+                active=True,
+            )
+        )
+        await session.commit()
+        item = watchlist("MACRO_BREAKOUT_LONG")
+        await evaluate_symbol(session, item, snapshot(price=101, closes=(99,)))
+        current = await session.scalar(select(WatchedSetupRow))
+        prior_payload = dict(current.state)
+
+        await evaluate_symbol(session, item, snapshot(price=101, closes=(99, 101)))
+        transition = await session.scalar(select(ScannerTransitionRow))
+
+    assert transition.from_status == "BREAKOUT_ATTEMPT"
+    assert transition.to_status == "ACCEPTANCE_PENDING"
+    assert transition.state_before == prior_payload
+    assert transition.state_before["status"] == "BREAKOUT_ATTEMPT"
+    assert transition.state_after["status"] == "ACCEPTANCE_PENDING"
+    assert transition.state_after["symbol"] == "BTCUSDT"
+    assert transition.state_after["setup_type"] == "MACRO_BREAKOUT_LONG"
+    assert transition.state_after["structure"] == {
+        "structure_id": "macro-zone",
+        "label": "daily resistance",
+        "type": "HORIZONTAL_ZONE",
+        "breakout_level": 100.0,
+    }
+    assert transition.state_after["distance_bps"] == pytest.approx(100.0)
+    assert transition.state_after["qualifying_close_count"] == 1
+    assert transition.state_after["required_acceptance_bars"] == 2
+    assert transition.state_after["blocking_reasons"] == []
+    assert transition.state_after["next_conditions"] == [
+        "await additional completed 1H acceptance"
+    ]
+    assert transition.state_after["data_status"] == "PARTIAL"
 
 
 @pytest.mark.asyncio

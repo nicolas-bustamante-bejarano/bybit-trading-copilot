@@ -94,6 +94,8 @@ class SetupScannerMonitor:
         self.setup_count = 0
         self.evaluated_symbols = []
         self.failed_symbols = []
+        evaluated_symbols: set[str] = set()
+        failed_symbols: set[str] = set()
         errors: list[str] = []
         try:
             async with self.sessions() as session:
@@ -118,18 +120,18 @@ class SetupScannerMonitor:
                             outcome = await self.compose_symbol(symbol_session, item, snapshot)
                         self.setup_count += len(outcome.results)
                         if outcome.results:
-                            self.evaluated_symbols.append(item.symbol)
-                        elif outcome.failed_setups:
-                            self.failed_symbols.append(item.symbol)
+                            evaluated_symbols.add(item.symbol)
+                        if outcome.failed_setups:
+                            failed_symbols.add(item.symbol)
                         for setup_type, error in outcome.failed_setups.items():
                             errors.append(f"{item.symbol}/{setup_type}: {error}")
                     except Exception as exc:  # noqa: BLE001 - isolate symbol failures
-                        self.failed_symbols.append(item.symbol)
+                        failed_symbols.add(item.symbol)
                         errors.append(f"{item.symbol}: {exc}")
 
             await asyncio.gather(*(evaluate_one(item) for item in unique.values()))
-            self.evaluated_symbols.sort()
-            self.failed_symbols.sort()
+            self.evaluated_symbols = sorted(evaluated_symbols)
+            self.failed_symbols = sorted(failed_symbols)
             if self.evaluated_symbols:
                 self.last_success_at = started_at
             self.last_error = "; ".join(errors) if errors else None

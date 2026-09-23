@@ -182,25 +182,30 @@ def _evaluate_macro(
     if resolution.reason:
         if accepted_reference is not None:
             raise RuntimeError("ACCEPTED_STRUCTURE_UNAVAILABLE")
-        state = {
-            "blocking_reasons": [resolution.reason],
-            "data_status": snapshot.data_status.value,
-        }
-        return (
-            ScannerResult(
-                symbol=snapshot.symbol,
-                setup_type=watched.setup_type,
-                side=side,
-                status=ScannerStatus.WATCH,
-                price=snapshot.current_price,
-                evaluated_at=snapshot.evaluated_at,
-                blocking_reasons=[resolution.reason],
-                next_conditions=["define actionable breakout structure"],
-                data_status=snapshot.data_status,
-                linked_trade_plan_id=watched.trade_plan_id,
-            ),
-            state,
+        result = ScannerResult(
+            symbol=snapshot.symbol,
+            setup_type=watched.setup_type,
+            side=side,
+            status=ScannerStatus.WATCH,
+            price=snapshot.current_price,
+            evaluated_at=snapshot.evaluated_at,
+            blocking_reasons=[resolution.reason],
+            next_conditions=["define actionable breakout structure"],
+            data_status=snapshot.data_status,
+            linked_trade_plan_id=watched.trade_plan_id,
         )
+        state = _macro_state_payload(
+            result=result,
+            lifecycle_state={},
+            structure_id=None,
+            structure_label=None,
+            structure_type=None,
+            breakout_level=None,
+            distance_bps=None,
+            qualifying_close_count=0,
+            required_acceptance_bars=watchlist_item.acceptance_bars,
+        )
+        return result, state
 
     lifecycle_level = (
         accepted_reference[1]
@@ -224,15 +229,6 @@ def _evaluate_macro(
         },
         evaluated_at=snapshot.evaluated_at,
     )
-    state = {
-        **macro.state,
-        "structure_id": macro.structure_id,
-        "breakout_level": macro.breakout_level,
-        "distance_bps": macro.distance_bps,
-        "qualifying_close_count": macro.qualifying_close_count,
-        "required_acceptance_bars": macro.required_acceptance_bars,
-        "data_status": snapshot.data_status.value,
-    }
     result = ScannerResult(
         symbol=snapshot.symbol,
         setup_type=watched.setup_type,
@@ -256,7 +252,53 @@ def _evaluate_macro(
         data_status=snapshot.data_status,
         linked_trade_plan_id=watched.trade_plan_id,
     )
+    state = _macro_state_payload(
+        result=result,
+        lifecycle_state=macro.state,
+        structure_id=macro.structure_id,
+        structure_label=resolution.structure_label,
+        structure_type=resolution.structure_type,
+        breakout_level=macro.breakout_level,
+        distance_bps=macro.distance_bps,
+        qualifying_close_count=macro.qualifying_close_count,
+        required_acceptance_bars=macro.required_acceptance_bars,
+    )
     return result, state
+
+
+def _macro_state_payload(
+    *,
+    result: ScannerResult,
+    lifecycle_state: dict[str, Any],
+    structure_id: str | None,
+    structure_label: str | None,
+    structure_type: str | None,
+    breakout_level: float | None,
+    distance_bps: float | None,
+    qualifying_close_count: int,
+    required_acceptance_bars: int,
+) -> dict[str, Any]:
+    return {
+        **lifecycle_state,
+        "symbol": result.symbol,
+        "setup_type": result.setup_type.value,
+        "side": result.side,
+        "status": result.status.value,
+        "price": result.price,
+        "evaluated_at": result.evaluated_at.isoformat(),
+        "structure": {
+            "structure_id": structure_id,
+            "label": structure_label,
+            "type": structure_type,
+            "breakout_level": breakout_level,
+        },
+        "distance_bps": distance_bps,
+        "qualifying_close_count": qualifying_close_count,
+        "required_acceptance_bars": required_acceptance_bars,
+        "blocking_reasons": list(result.blocking_reasons),
+        "next_conditions": list(result.next_conditions),
+        "data_status": result.data_status.value,
+    }
 
 
 def _accepted_macro_reference(
