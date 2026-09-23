@@ -50,10 +50,22 @@ class FibDefinitionInput(BaseModel):
     swing_low: Decimal
     swing_high: Decimal
 
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.swing_low >= self.swing_high:
+            raise ValueError("swing_low must be less than swing_high")
+        return self
+
 
 class RangeDefinitionInput(BaseModel):
     range_low: Decimal
     range_high: Decimal
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.range_low >= self.range_high:
+            raise ValueError("range_low must be less than range_high")
+        return self
 
 
 class SizingStage(BaseModel):

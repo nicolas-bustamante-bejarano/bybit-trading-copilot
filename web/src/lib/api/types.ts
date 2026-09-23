@@ -30,7 +30,7 @@ export interface Coach {
   plan: { status: EvidenceStatus; trade_plan_id: string | null; setup_type: string | null; lifecycle_status: string | null; thesis: string | null; hard_invalidation: string | null; thesis_warning: string | null; correlation_group: string | null; targets: Record<string, unknown>[]; stop_provenance: string };
   market_context: { status: EvidenceStatus; regime_4h: string | null; context_1h: string | null; ema_12: string | null; ema_21: string | null; stoch_rsi: { k?: string | null; d?: string | null }; location: string; location_status: EvidenceStatus; playbook_state: string | null; reaction: string | null; reaction_status: EvidenceStatus; funding: string | null; open_interest: string | null };
   risk: { account_equity: string; position_structural_risk_usdt: string | null; position_risk_pct: string | null; correlation_group: string; known_group_risk_usdt: string; group_risk_pct: string | null; max_risk_pct: string | null; policy_status: RiskStatus; provenance: Record<string, string>; incomplete_symbols: string[] };
-  execution: { state: ExecutionState; add_allowed: boolean; evidence_present: string[]; evidence_missing: string[]; blocking_reasons: string[]; warnings: string[]; next_conditions: string[]; invalidation: string | null };
+  execution: { state: ExecutionState; add_allowed: boolean; evidence_present: string[]; evidence_missing: string[]; blocking_reasons: string[]; warnings: string[]; next_conditions: string[]; invalidation: string | null; condition_evidence: string[] };
 }
 export interface ExecutionRule { id: string; action: string; rule_type: string; description: string; parameters: Record<string, unknown>; ordering: number }
 export interface TradePlan {

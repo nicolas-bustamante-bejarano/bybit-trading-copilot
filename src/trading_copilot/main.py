@@ -427,7 +427,7 @@ async def workspace_sizing(request: SizingRequest, session: AsyncSession = Depen
             position = next((item for item in account.positions if item.symbol == plan.symbol), None)
             if position is not None:
                 coach = await compose_position_coach(account, position, session)
-                canonical = _canonical_sizing_evidence(coach)
+                canonical = coach.execution.condition_evidence
                 request = request.model_copy(update={"current_evidence": canonical})
             else:
                 request = request.model_copy(update={"current_evidence": []})
@@ -454,23 +454,6 @@ def _plan_stages(plan: TradePlanRow):
     if not configured:
         return []
     return [SizingStage.model_validate(stage) for stage in configured]
-
-
-def _canonical_sizing_evidence(coach: PositionCoach) -> list[str]:
-    """Map only server-composed coach state into the persisted rule vocabulary."""
-    evidence: list[str] = []
-    if coach.market_context.regime_4h is not None and coach.market_context.status == "CONFIRMED":
-        evidence.append("CONTEXT_VALID")
-    if coach.market_context.location_status == "CONFIRMED":
-        evidence.append("LOCATION_VALID")
-    reaction = coach.market_context.reaction
-    if reaction in {"buy_continuation", "sell_absorption"}:
-        evidence.extend(["BUYER_CONFIRMATION", "DIRECTIONAL_CONFIRMATION"])
-    if reaction in {"sell_continuation", "buy_absorption"}:
-        evidence.extend(["SELLER_CONFIRMATION", "DIRECTIONAL_CONFIRMATION"])
-    if coach.risk.policy_status == "PASS":
-        evidence.append("RISK_PASS_REQUIRED")
-    return evidence
 
 
 @app.post("/analysis/fib")

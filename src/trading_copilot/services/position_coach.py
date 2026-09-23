@@ -360,6 +360,22 @@ def evaluate_position_coach(
         add_allowed = False
     else:
         state = CoachExecutionState.ADD if add_allowed else CoachExecutionState.HOLD
+
+    condition_evidence: list[str] = []
+    if context_valid:
+        condition_evidence.append("CONTEXT_VALID")
+    if at_location:
+        condition_evidence.append("LOCATION_VALID")
+    if confirmation:
+        condition_evidence.extend(
+            [
+                "BUYER_CONFIRMATION" if side == Side.LONG else "SELLER_CONFIRMATION",
+                "DIRECTIONAL_CONFIRMATION",
+                "FRESH_DIRECTIONAL_CONFIRMATION",
+            ]
+        )
+    if risk.policy_status == RiskPolicyStatus.PASS:
+        condition_evidence.append("RISK_PASS_REQUIRED")
     if breached:
         blocking.insert(0, "hard structural invalidation breached")
         add_allowed = False
@@ -453,6 +469,7 @@ def evaluate_position_coach(
                 )
                 if condition
             ],
+            condition_evidence=condition_evidence,
             invalidation=invalidation,
         ),
         confidence=confidence,
