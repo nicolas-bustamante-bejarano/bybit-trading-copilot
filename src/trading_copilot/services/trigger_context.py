@@ -8,7 +8,11 @@ from math import isfinite
 from typing import Any
 
 from trading_copilot.domain.models import Side
-from trading_copilot.domain.scanner import ScannerSetupType, ScannerStatus
+from trading_copilot.domain.scanner import (
+    ScannerSetupType,
+    ScannerStatus,
+    enabled_setup_types,
+)
 from trading_copilot.domain.trigger import (
     LowerTimeframeTriggerSnapshot,
     TriggerArmSource,
@@ -33,6 +37,8 @@ class TriggerContextResolution:
     eligible: bool
     armed_at: datetime | None = None
     arm_source: TriggerArmSource | None = None
+    arm_key: str | None = None
+    arm_transition_id: str | None = None
     reference_level: float | None = None
     reference_source: TriggerReferenceSource | None = None
     armed_state: dict[str, Any] = field(default_factory=dict)
@@ -159,6 +165,32 @@ def resolve_trigger_context(
             "WATCHLIST_CONFIG_REQUIRED",
             retest_tolerance_bps=retest_tolerance,
         )
+    if not watchlist.enabled:
+        return _blocked(
+            watched,
+            setup_type,
+            side,
+            "WATCHLIST_DISABLED",
+            retest_tolerance_bps=retest_tolerance,
+        )
+    try:
+        enabled_setups = enabled_setup_types(watchlist.enabled_playbooks)
+    except (AttributeError, TypeError, ValueError):
+        return _blocked(
+            watched,
+            setup_type,
+            side,
+            "TRIGGER_CONFIG_INVALID",
+            retest_tolerance_bps=retest_tolerance,
+        )
+    if setup_type not in enabled_setups:
+        return _blocked(
+            watched,
+            setup_type,
+            side,
+            "SETUP_DISABLED",
+            retest_tolerance_bps=retest_tolerance,
+        )
     if watched.status != ScannerStatus.TRIGGER_ARMED.value:
         return _blocked(
             watched,
@@ -189,10 +221,14 @@ def resolve_trigger_context(
         )
         armed_at = transition.timestamp
         arm_source = TriggerArmSource.ARM_TRANSITION
+        arm_transition_id = transition.id
+        arm_key = f"TRANSITION:{transition.id}"
         armed_state = transition.state_after
     elif watched.version == 1 and _aware(watched.created_at):
         armed_at = watched.created_at
         arm_source = TriggerArmSource.FIRST_OBSERVATION_BASELINE
+        arm_transition_id = None
+        arm_key = f"BASELINE:{watched.id}:{watched.created_at.isoformat()}"
         armed_state = watched.state
     else:
         return _blocked(
@@ -239,6 +275,8 @@ def resolve_trigger_context(
         eligible=True,
         armed_at=armed_at,
         arm_source=arm_source,
+        arm_key=arm_key,
+        arm_transition_id=arm_transition_id,
         reference_level=level,
         reference_source=source,
         armed_state=deepcopy(dict(armed_state)),

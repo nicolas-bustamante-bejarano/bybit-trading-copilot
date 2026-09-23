@@ -34,18 +34,16 @@ class _SequenceEvidence:
     confirmation: LowerTimeframeBar | None = None
 
 
-def _completed_bars(
-    bars: Iterable[LowerTimeframeBar], armed_at_ms: float, evaluated_at_ms: float
+def _ordered_unique_bars(
+    bars: Iterable[LowerTimeframeBar],
 ) -> list[LowerTimeframeBar]:
-    """Sort completed bars and collapse exact duplicates deterministically.
+    """Sort bars and collapse exact duplicates deterministically.
 
     Two different bars claiming the same interval are invalid rather than silently
     choosing one observation over another.
     """
     by_start: dict[int, LowerTimeframeBar] = {}
     for bar in bars:
-        if bar.end_ms <= armed_at_ms or bar.end_ms > evaluated_at_ms:
-            continue
         existing = by_start.get(bar.start_ms)
         if existing is not None and existing != bar:
             raise ValueError(f"conflicting duplicate bar timestamp: {bar.start_ms}")
@@ -54,6 +52,30 @@ def _completed_bars(
     if len({bar.end_ms for bar in ordered}) != len(ordered):
         raise ValueError("conflicting duplicate bar end timestamp")
     return ordered
+
+
+def _completed_5m_bars(
+    bars: Iterable[LowerTimeframeBar], armed_at_ms: float, evaluated_at_ms: float
+) -> list[LowerTimeframeBar]:
+    """Use only fully post-arm completed 5m candles for trigger structure."""
+    eligible = (
+        bar
+        for bar in bars
+        if bar.start_ms >= armed_at_ms and bar.end_ms <= evaluated_at_ms
+    )
+    return _ordered_unique_bars(eligible)
+
+
+def _completed_15m_bars(
+    bars: Iterable[LowerTimeframeBar], armed_at_ms: float, evaluated_at_ms: float
+) -> list[LowerTimeframeBar]:
+    """Use post-arm completed closes; the 15m wick is not trigger structure."""
+    eligible = (
+        bar
+        for bar in bars
+        if bar.end_ms > armed_at_ms and bar.end_ms <= evaluated_at_ms
+    )
+    return _ordered_unique_bars(eligible)
 
 
 def _pattern(setup_type: ScannerSetupType) -> TriggerPattern:
@@ -191,8 +213,8 @@ def _evaluate_retest_hold(
 def evaluate_lower_timeframe_trigger(request: TriggerEvaluationRequest) -> TriggerResult:
     armed_at_ms = request.armed_at.timestamp() * 1000
     evaluated_at_ms = request.evaluated_at.timestamp() * 1000
-    bars_5m = _completed_bars(request.bars_5m, armed_at_ms, evaluated_at_ms)
-    bars_15m = _completed_bars(request.bars_15m, armed_at_ms, evaluated_at_ms)
+    bars_5m = _completed_5m_bars(request.bars_5m, armed_at_ms, evaluated_at_ms)
+    bars_15m = _completed_15m_bars(request.bars_15m, armed_at_ms, evaluated_at_ms)
     pattern = _pattern(request.setup_type)
     reaction_supportive = _reaction_support(request.side, request.reaction_state)
     local_acceptance = _local_acceptance(

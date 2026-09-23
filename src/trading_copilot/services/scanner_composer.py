@@ -7,7 +7,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from trading_copilot.domain.scanner import ScannerResult, ScannerSetupType, ScannerStatus
+from trading_copilot.domain.scanner import (
+    ScannerResult,
+    ScannerStatus,
+    enabled_setup_types,
+)
 from trading_copilot.persistence.models import (
     ChartStructureRow,
     FibDefinitionRow,
@@ -22,18 +26,6 @@ from trading_copilot.services.scanner_playbook import evaluate_scanner_playbook
 from trading_copilot.services.scanner_snapshot import ScannerSymbolSnapshot
 from trading_copilot.services.scanner_structure import resolve_macro
 
-FAMILY_SETUPS = {
-    "TREND_PULLBACK": (
-        ScannerSetupType.TREND_PULLBACK_LONG,
-        ScannerSetupType.TREND_PULLBACK_SHORT,
-    ),
-    "RANGE": (ScannerSetupType.RANGE_LONG, ScannerSetupType.RANGE_SHORT),
-    "MACRO_BREAKOUT": (
-        ScannerSetupType.MACRO_BREAKOUT_LONG,
-        ScannerSetupType.MACRO_BREAKOUT_SHORT,
-    ),
-}
-
 ACCEPTED_MACRO_STATUSES = {
     ScannerStatus.BREAKOUT_ACCEPTED.value,
     ScannerStatus.RETEST_PENDING.value,
@@ -45,20 +37,6 @@ ACCEPTED_MACRO_STATUSES = {
 class SymbolEvaluationOutcome:
     results: list[ScannerResult] = field(default_factory=list)
     failed_setups: dict[str, str] = field(default_factory=dict)
-
-
-def enabled_setup_types(enabled_playbooks: list[str]) -> list[ScannerSetupType]:
-    enabled: set[ScannerSetupType] = set()
-    for configured in enabled_playbooks:
-        normalized = configured.upper()
-        if normalized in FAMILY_SETUPS:
-            enabled.update(FAMILY_SETUPS[normalized])
-            continue
-        try:
-            enabled.add(ScannerSetupType(normalized))
-        except ValueError as exc:
-            raise ValueError(f"unsupported scanner playbook: {configured}") from exc
-    return [setup for setup in ScannerSetupType if setup in enabled]
 
 
 async def evaluate_symbol(

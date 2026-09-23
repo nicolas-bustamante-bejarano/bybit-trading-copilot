@@ -632,13 +632,82 @@ def test_bar_ending_exactly_at_arm_is_excluded():
     assert result.state == TriggerState.INDETERMINATE
 
 
-def test_first_bar_ending_after_arm_is_included():
+def test_first_bar_starting_exactly_at_arm_is_included():
     result = evaluate_lower_timeframe_trigger(
-        request(bars_5m=[long_reclaim(1_001)], armed_ms=1_000)
+        request(bars_5m=[long_reclaim(1_100)], armed_ms=1_000)
     )
 
     assert result.state == TriggerState.RECLAIMED
     assert result.armed_at == datetime.fromtimestamp(1, UTC)
+
+
+def test_straddling_long_reclaim_cannot_anchor_post_arm_continuation():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            bars_5m=[long_reclaim(1_000), long_rotation(1_100)],
+            bars_15m=[supportive_15m(Side.LONG, 1_100)],
+            armed_ms=950,
+            evaluated_ms=1_100,
+        )
+    )
+
+    assert result.state == TriggerState.WAITING
+    assert not result.trigger_confirmed
+
+
+def test_straddling_macro_hold_cannot_anchor_post_arm_continuation():
+    hold = bar(1_000, open=100, high=101, low=99.8, close=100.5)
+    continuation = bar(1_100, open=101, high=102.5, low=101, close=102)
+    result = evaluate_lower_timeframe_trigger(
+        macro_request(
+            Side.LONG,
+            [hold, continuation],
+            [supportive_15m(Side.LONG, 1_100)],
+            armed_ms=950,
+            evaluated_ms=1_100,
+        )
+    )
+
+    assert result.state == TriggerState.WAITING
+    assert not result.trigger_confirmed
+
+
+def test_straddling_short_reclaim_cannot_anchor_post_arm_continuation():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            setup_type=ScannerSetupType.RANGE_SHORT,
+            side=Side.SHORT,
+            bars_5m=[short_reclaim(1_000), short_rotation(1_100)],
+            bars_15m=[supportive_15m(Side.SHORT, 1_100)],
+            armed_ms=950,
+            evaluated_ms=1_100,
+        )
+    )
+
+    assert result.state == TriggerState.WAITING
+    assert not result.trigger_confirmed
+
+
+def test_15m_bar_may_straddle_arm_when_its_close_is_post_arm():
+    acceptance = LowerTimeframeBar(
+        start_ms=900,
+        end_ms=1_200,
+        open=100,
+        high=101,
+        low=99,
+        close=100.5,
+    )
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            bars_5m=[long_reclaim(1_100), long_rotation(1_200)],
+            bars_15m=[acceptance],
+            armed_ms=1_000,
+            evaluated_ms=1_200,
+        )
+    )
+
+    assert result.local_15m_acceptance is True
+    assert result.state == TriggerState.CONFIRMED
 
 
 def test_full_pre_arm_long_sequence_is_ignored():

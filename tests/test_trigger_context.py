@@ -67,12 +67,16 @@ def watched(
     )
 
 
-def watchlist():
+def watchlist(*, enabled=True, playbooks=None):
     return ScannerWatchlistRow(
         id="watch-1",
         symbol="BTCUSDT",
-        enabled=True,
-        enabled_playbooks=["RANGE"],
+        enabled=enabled,
+        enabled_playbooks=(
+            playbooks
+            if playbooks is not None
+            else ["TREND_PULLBACK", "RANGE", "MACRO_BREAKOUT"]
+        ),
         approach_tolerance_bps=Decimal(50),
         retest_tolerance_bps=Decimal("17.5"),
         acceptance_bars=2,
@@ -365,6 +369,152 @@ def test_watchlist_tolerances_are_exposed_with_named_failure_default():
 
     assert result.retest_tolerance_bps == 17.5
     assert result.failure_tolerance_bps == DEFAULT_TRIGGER_FAILURE_TOLERANCE_BPS
+
+
+def test_disabled_watchlist_blocks_historical_armed_setup():
+    result = resolve_trigger_context(
+        watched=watched(),
+        watchlist=watchlist(enabled=False),
+        transitions=[transition(range_state())],
+    )
+
+    assert not result.eligible
+    assert result.blocking_reason == "WATCHLIST_DISABLED"
+
+
+@pytest.mark.parametrize(
+    "setup_type",
+    [ScannerSetupType.TREND_PULLBACK_LONG, ScannerSetupType.TREND_PULLBACK_SHORT],
+)
+def test_family_playbook_enables_both_directions(setup_type):
+    state = trend_state()
+    row = watched(setup_type, state=state)
+    armed = transition(state)
+    armed.setup_type = setup_type.value
+
+    result = resolve_trigger_context(
+        watched=row,
+        watchlist=watchlist(playbooks=["TREND_PULLBACK"]),
+        transitions=[armed],
+    )
+
+    assert result.eligible
+
+
+def test_exact_playbook_enables_only_exact_setup():
+    long_result = resolve_trigger_context(
+        watched=watched(ScannerSetupType.RANGE_LONG),
+        watchlist=watchlist(playbooks=["RANGE_LONG"]),
+        transitions=[transition(range_state())],
+    )
+    short_row = watched(ScannerSetupType.RANGE_SHORT)
+    short_transition = transition(range_state())
+    short_transition.setup_type = short_row.setup_type
+    short_result = resolve_trigger_context(
+        watched=short_row,
+        watchlist=watchlist(playbooks=["RANGE_LONG"]),
+        transitions=[short_transition],
+    )
+
+    assert long_result.eligible
+    assert not short_result.eligible
+    assert short_result.blocking_reason == "SETUP_DISABLED"
+
+
+def test_removed_family_blocks_historical_armed_setup():
+    result = resolve_trigger_context(
+        watched=watched(ScannerSetupType.RANGE_LONG),
+        watchlist=watchlist(playbooks=["TREND_PULLBACK"]),
+        transitions=[transition(range_state())],
+    )
+
+    assert not result.eligible
+    assert result.blocking_reason == "SETUP_DISABLED"
+
+
+def test_malformed_enabled_playbooks_blocks_safely():
+    result = resolve_trigger_context(
+        watched=watched(),
+        watchlist=watchlist(playbooks=["UNKNOWN_PLAYBOOK"]),
+        transitions=[transition(range_state())],
+    )
+
+    assert not result.eligible
+    assert result.blocking_reason == "TRIGGER_CONFIG_INVALID"
+
+
+def test_transition_arm_key_is_stable():
+    armed = transition(range_state(), transition_id="arm-transition")
+    first = resolve_trigger_context(
+        watched=watched(), watchlist=watchlist(), transitions=[armed]
+    )
+    second = resolve_trigger_context(
+        watched=watched(), watchlist=watchlist(), transitions=[armed]
+    )
+
+    assert first.arm_key == second.arm_key == "TRANSITION:arm-transition"
+    assert first.arm_transition_id == "arm-transition"
+
+
+def test_baseline_arm_key_is_stable():
+    row = watched(version=1)
+    first = resolve_trigger_context(
+        watched=row, watchlist=watchlist(), transitions=[]
+    )
+    second = resolve_trigger_context(
+        watched=row, watchlist=watchlist(), transitions=[]
+    )
+
+    assert first.arm_key == second.arm_key
+    assert first.arm_key == f"BASELINE:{row.id}:{row.created_at.isoformat()}"
+    assert first.arm_transition_id is None
+
+
+def test_latest_rearm_gets_new_transition_identity():
+    first_arm = transition(
+        range_state(90, 110),
+        timestamp=ARMED_AT,
+        transition_id="arm-a",
+        version=2,
+    )
+    disarm = transition(
+        range_state(90, 110),
+        timestamp=ARMED_AT + timedelta(hours=1),
+        transition_id="disarm",
+        version=3,
+        to_status=ScannerStatus.WATCH,
+    )
+    second_arm = transition(
+        range_state(95, 105),
+        timestamp=ARMED_AT + timedelta(hours=2),
+        transition_id="arm-b",
+        version=4,
+    )
+
+    result = resolve_trigger_context(
+        watched=watched(version=4),
+        watchlist=watchlist(),
+        transitions=[first_arm, disarm, second_arm],
+    )
+
+    assert result.arm_key == "TRANSITION:arm-b"
+    assert result.arm_transition_id == "arm-b"
+    assert result.reference_level == 95
+
+
+def test_mutable_row_timestamps_do_not_affect_arm_key():
+    row = watched()
+    armed = transition(range_state(), transition_id="fixed-arm")
+    before = resolve_trigger_context(
+        watched=row, watchlist=watchlist(), transitions=[armed]
+    )
+    row.updated_at = row.updated_at + timedelta(days=50)
+    row.last_evaluated_at = row.last_evaluated_at + timedelta(days=60)
+    after = resolve_trigger_context(
+        watched=row, watchlist=watchlist(), transitions=[armed]
+    )
+
+    assert before.arm_key == after.arm_key == "TRANSITION:fixed-arm"
 
 
 def test_composer_rejects_ineligible_context():
