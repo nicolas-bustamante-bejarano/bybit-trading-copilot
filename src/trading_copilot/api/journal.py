@@ -22,6 +22,7 @@ from trading_copilot.persistence.models import (
     TradeReviewRow,
 )
 from trading_copilot.persistence.repository import TradePlanRepository
+from trading_copilot.services.indicators import fib_retracements
 
 router = APIRouter(prefix="/trade-plans", tags=["trade journal"])
 
@@ -211,7 +212,10 @@ async def get_review(plan_id: str, session: AsyncSession = Depends(get_session))
 async def list_fibs(plan_id: str, session: AsyncSession = Depends(get_session)):
     await require_plan(session, plan_id)
     rows = await session.scalars(select(FibDefinitionRow).where(FibDefinitionRow.trade_plan_id == plan_id))
-    return [dump(row) for row in rows]
+    return [
+        dump(row) | {"levels": fib_retracements(float(row.swing_low), float(row.swing_high), row.direction.lower())}
+        for row in rows
+    ]
 
 
 @router.put("/{plan_id}/fib-definition")
@@ -226,7 +230,7 @@ async def put_fib(plan_id: str, body: FibDefinitionInput, session: AsyncSession 
             setattr(row, key, value)
     await session.commit()
     await session.refresh(row)
-    return dump(row)
+    return dump(row) | {"levels": fib_retracements(float(row.swing_low), float(row.swing_high), row.direction.lower())}
 
 
 @router.get("/{plan_id}/range-definitions")
