@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any
 
 from sqlalchemy import select
@@ -31,6 +32,12 @@ FAMILY_SETUPS = {
         ScannerSetupType.MACRO_BREAKOUT_LONG,
         ScannerSetupType.MACRO_BREAKOUT_SHORT,
     ),
+}
+
+ACCEPTED_MACRO_STATUSES = {
+    ScannerStatus.BREAKOUT_ACCEPTED.value,
+    ScannerStatus.RETEST_PENDING.value,
+    ScannerStatus.TRIGGER_ARMED.value,
 }
 
 
@@ -163,7 +170,8 @@ def _evaluate_macro(
 ) -> tuple[ScannerResult, dict[str, Any]]:
     side = "LONG" if watched.setup_type.endswith("_LONG") else "SHORT"
     prior = dict(watched.state or {})
-    pinned_structure_id = prior.get("accepted_structure_id")
+    accepted_reference = _accepted_macro_reference(watched, side)
+    pinned_structure_id = accepted_reference[0] if accepted_reference is not None else None
     resolution = resolve_macro(
         structures=structures,
         side=side,
@@ -172,6 +180,8 @@ def _evaluate_macro(
         pinned_structure_id=pinned_structure_id,
     )
     if resolution.reason:
+        if accepted_reference is not None:
+            raise RuntimeError("ACCEPTED_STRUCTURE_UNAVAILABLE")
         state = {
             "blocking_reasons": [resolution.reason],
             "data_status": snapshot.data_status.value,
@@ -192,10 +202,15 @@ def _evaluate_macro(
             state,
         )
 
+    lifecycle_level = (
+        accepted_reference[1]
+        if accepted_reference is not None
+        else resolution.breakout_level
+    )
     macro = evaluate_macro_breakout(
         side=side,
         current_price=snapshot.current_price,
-        breakout_level=resolution.breakout_level,
+        breakout_level=lifecycle_level,
         approach_tolerance_bps=float(watchlist_item.approach_tolerance_bps),
         retest_tolerance_bps=float(watchlist_item.retest_tolerance_bps),
         acceptance_bars=watchlist_item.acceptance_bars,
@@ -242,3 +257,25 @@ def _evaluate_macro(
         linked_trade_plan_id=watched.trade_plan_id,
     )
     return result, state
+
+
+def _accepted_macro_reference(
+    watched: WatchedSetupRow, side: str
+) -> tuple[str, float] | None:
+    if watched.status not in ACCEPTED_MACRO_STATUSES:
+        return None
+    prior = watched.state or {}
+    structure_id = prior.get("accepted_structure_id")
+    level = prior.get("accepted_breakout_level")
+    accepted_side = prior.get("accepted_side")
+    if (
+        not isinstance(structure_id, str)
+        or not structure_id
+        or isinstance(level, bool)
+        or not isinstance(level, (int, float))
+        or not isfinite(float(level))
+        or float(level) <= 0
+        or accepted_side != side
+    ):
+        return None
+    return structure_id, float(level)

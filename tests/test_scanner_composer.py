@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -40,7 +40,7 @@ async def sessions(tmp_path):
         await engine.dispose()
 
 
-def snapshot(price=110, closes=(99,)):
+def snapshot(price=110, closes=(99,), evaluated_at=NOW):
     one_hour = ScannerTimeframeSnapshot(
         regime=Regime.UPTREND,
         close=closes[-1],
@@ -60,7 +60,7 @@ def snapshot(price=110, closes=(99,)):
     return ScannerSymbolSnapshot(
         symbol="BTCUSDT",
         current_price=price,
-        evaluated_at=NOW,
+        evaluated_at=evaluated_at,
         one_hour=one_hour,
         four_hour=four_hour,
         completed_1h_closes=tuple(closes),
@@ -278,3 +278,133 @@ async def test_failed_sibling_setup_does_not_fabricate_state_or_block_success(
     ]
     assert outcome.failed_setups == {"TREND_PULLBACK_SHORT": "isolated setup failure"}
     assert {row.setup_type for row in rows} == {"TREND_PULLBACK_LONG", "RANGE_LONG"}
+
+
+def accepted_state(side, structure_id="accepted-line", level=100.0):
+    return {
+        "accepted_at": NOW.isoformat(),
+        "accepted_breakout_level": level,
+        "accepted_structure_id": structure_id,
+        "accepted_close_count": 2,
+        "acceptance_bars": 2,
+        "accepted_side": side,
+    }
+
+
+def accepted_trendline(*, active=True, malformed=False):
+    start_ms = int(NOW.timestamp() * 1000)
+    return ChartStructureRow(
+        id="accepted-line",
+        symbol="BTCUSDT",
+        timeframe="1D",
+        structure_type="TRENDLINE",
+        label="accepted trendline",
+        anchor_one_time=start_ms,
+        anchor_one_price=Decimal(100),
+        anchor_two_time=None if malformed else start_ms + 3_600_000,
+        anchor_two_price=None if malformed else Decimal(105),
+        active=active,
+    )
+
+
+@pytest.mark.parametrize(
+    ("setup_type", "side"),
+    [
+        ("MACRO_BREAKOUT_LONG", "LONG"),
+        ("MACRO_BREAKOUT_SHORT", "SHORT"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_accepted_trendline_keeps_original_reference_level_for_retest(
+    sessions, setup_type, side
+):
+    later = NOW + timedelta(hours=1)
+    async with sessions() as session:
+        session.add_all(
+            [
+                accepted_trendline(),
+                WatchedSetupRow(
+                    symbol="BTCUSDT",
+                    setup_type=setup_type,
+                    status="BREAKOUT_ACCEPTED",
+                    state=accepted_state(side),
+                ),
+            ]
+        )
+        await session.commit()
+
+        outcome = await evaluate_symbol(
+            session,
+            watchlist(setup_type),
+            snapshot(price=100.4, evaluated_at=later),
+        )
+        persisted = await session.scalar(
+            select(WatchedSetupRow).where(WatchedSetupRow.setup_type == setup_type)
+        )
+
+    assert outcome.failed_setups == {}
+    assert outcome.results[0].status == ScannerStatus.TRIGGER_ARMED
+    assert outcome.results[0].structure["breakout_level"] == 100.0
+    assert persisted.state["accepted_breakout_level"] == 100.0
+    assert persisted.state["distance_bps"] == pytest.approx(40.0)
+
+
+@pytest.mark.parametrize("structure_state", ["deleted", "inactive", "malformed"])
+@pytest.mark.asyncio
+async def test_unavailable_accepted_structure_leaves_persisted_lifecycle_untouched(
+    sessions, structure_state
+):
+    prior = accepted_state("LONG")
+    async with sessions() as session:
+        current = WatchedSetupRow(
+            symbol="BTCUSDT",
+            setup_type="MACRO_BREAKOUT_LONG",
+            status="BREAKOUT_ACCEPTED",
+            state=prior,
+        )
+        session.add(current)
+        if structure_state == "inactive":
+            session.add(accepted_trendline(active=False))
+        elif structure_state == "malformed":
+            session.add(accepted_trendline(malformed=True))
+        await session.commit()
+        watched_id = current.id
+        version = current.version
+
+        outcome = await evaluate_symbol(
+            session,
+            watchlist("MACRO_BREAKOUT_LONG"),
+            snapshot(price=100.4, evaluated_at=NOW + timedelta(hours=1)),
+        )
+
+    async with sessions() as fresh_session:
+        reloaded = await fresh_session.get(WatchedSetupRow, watched_id)
+        transition_count = await fresh_session.scalar(
+            select(func.count(ScannerTransitionRow.id))
+        )
+
+    assert outcome.results == []
+    assert outcome.failed_setups == {
+        "MACRO_BREAKOUT_LONG": "ACCEPTED_STRUCTURE_UNAVAILABLE"
+    }
+    assert reloaded.status == "BREAKOUT_ACCEPTED"
+    assert reloaded.state == prior
+    assert reloaded.version == version
+    assert transition_count == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_acceptance_missing_structure_still_persists_watch_blocker(sessions):
+    async with sessions() as session:
+        outcome = await evaluate_symbol(
+            session,
+            watchlist("MACRO_BREAKOUT_LONG"),
+            snapshot(),
+        )
+        persisted = await session.scalar(select(WatchedSetupRow))
+
+    assert outcome.failed_setups == {}
+    assert outcome.results[0].status == ScannerStatus.WATCH
+    assert outcome.results[0].blocking_reasons == ["STRUCTURE_REQUIRED"]
+    assert persisted.status == "WATCH"
+    assert persisted.state["blocking_reasons"] == ["STRUCTURE_REQUIRED"]
