@@ -9,6 +9,7 @@ from trading_copilot.domain.trigger import TriggerArmSource, TriggerReferenceSou
 from trading_copilot.persistence.models import (
     ScannerTransitionRow,
     ScannerWatchlistRow,
+    TriggerAttemptRow,
     WatchedSetupRow,
 )
 from trading_copilot.services.trigger_context import (
@@ -103,6 +104,31 @@ def transition(
         state_after=state_after,
         version=version,
     )
+
+
+def attempt_for(context, **changes):
+    values = {
+        "id": "attempt-1",
+        "watched_setup_id": context.watched_setup_id,
+        "symbol": context.symbol,
+        "setup_type": context.setup_type.value,
+        "arm_key": context.arm_key,
+        "arm_source": context.arm_source.value,
+        "arm_transition_id": context.arm_transition_id,
+        "armed_at": context.armed_at,
+        "reference_level": Decimal(str(context.reference_level)),
+        "reference_source": context.reference_source.value,
+        "reference_metadata": dict(context.reference_metadata),
+        "retest_tolerance_bps": Decimal(str(context.retest_tolerance_bps)),
+        "failure_tolerance_bps": Decimal(str(context.failure_tolerance_bps)),
+        "state": TriggerState.WAITING.value,
+        "result": {},
+        "version": 1,
+        "first_evaluated_at": ARMED_AT,
+        "last_evaluated_at": ARMED_AT,
+    }
+    values.update(changes)
+    return TriggerAttemptRow(**values)
 
 
 @pytest.mark.parametrize(
@@ -515,6 +541,105 @@ def test_mutable_row_timestamps_do_not_affect_arm_key():
     )
 
     assert before.arm_key == after.arm_key == "TRANSITION:fixed-arm"
+
+
+def test_existing_attempt_freezes_baseline_reference_and_tolerances():
+    row = watched(version=1, state=range_state(100, 110))
+    initial = resolve_trigger_context(
+        watched=row, watchlist=watchlist(), transitions=[]
+    )
+    existing = attempt_for(initial)
+    row.state = range_state(101, 110)
+    changed_watchlist = watchlist()
+    changed_watchlist.retest_tolerance_bps = Decimal(50)
+
+    resolved = resolve_trigger_context(
+        watched=row,
+        watchlist=changed_watchlist,
+        transitions=[],
+        existing_attempt=existing,
+    )
+
+    assert resolved.eligible
+    assert resolved.reference_level == 100
+    assert resolved.retest_tolerance_bps == 17.5
+
+
+def test_existing_attempt_freezes_transition_context():
+    armed = transition(range_state(100, 110), transition_id="arm-a")
+    initial = resolve_trigger_context(
+        watched=watched(), watchlist=watchlist(), transitions=[armed]
+    )
+    existing = attempt_for(
+        initial,
+        reference_level=Decimal(99),
+        reference_metadata={"nested": {"source": "persisted"}},
+        failure_tolerance_bps=Decimal(30),
+    )
+
+    resolved = resolve_trigger_context(
+        watched=watched(),
+        watchlist=watchlist(),
+        transitions=[armed],
+        existing_attempt=existing,
+    )
+
+    assert resolved.reference_level == 99
+    assert resolved.reference_metadata == {"nested": {"source": "persisted"}}
+    assert resolved.failure_tolerance_bps == 30
+
+
+def test_old_attempt_is_ignored_after_rearm_and_new_config_is_used():
+    first_arm = transition(range_state(90, 110), transition_id="arm-a", version=2)
+    first = resolve_trigger_context(
+        watched=watched(), watchlist=watchlist(), transitions=[first_arm]
+    )
+    old_attempt = attempt_for(first)
+    second_arm = transition(
+        range_state(98, 108),
+        timestamp=ARMED_AT + timedelta(hours=1),
+        transition_id="arm-b",
+        version=4,
+    )
+    changed_watchlist = watchlist()
+    changed_watchlist.retest_tolerance_bps = Decimal(50)
+
+    resolved = resolve_trigger_context(
+        watched=watched(version=4),
+        watchlist=changed_watchlist,
+        transitions=[first_arm, second_arm],
+        existing_attempt=old_attempt,
+    )
+
+    assert resolved.arm_key == "TRANSITION:arm-b"
+    assert resolved.reference_level == 98
+    assert resolved.retest_tolerance_bps == 50
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("arm_source", "CORRUPT"),
+        ("arm_transition_id", "wrong-transition"),
+        ("reference_level", Decimal(0)),
+        ("reference_metadata", ["not", "a", "mapping"]),
+    ],
+)
+def test_malformed_current_attempt_blocks_safely(field, value):
+    armed = transition(range_state(), transition_id="arm-a")
+    initial = resolve_trigger_context(
+        watched=watched(), watchlist=watchlist(), transitions=[armed]
+    )
+
+    resolved = resolve_trigger_context(
+        watched=watched(),
+        watchlist=watchlist(),
+        transitions=[armed],
+        existing_attempt=attempt_for(initial, **{field: value}),
+    )
+
+    assert not resolved.eligible
+    assert resolved.blocking_reason == "TRIGGER_ATTEMPT_CONTEXT_INVALID"
 
 
 def test_composer_rejects_ineligible_context():

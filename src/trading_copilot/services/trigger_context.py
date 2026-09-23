@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from math import isfinite
 from typing import Any
 
@@ -22,6 +23,7 @@ from trading_copilot.domain.trigger import (
 from trading_copilot.persistence.models import (
     ScannerTransitionRow,
     ScannerWatchlistRow,
+    TriggerAttemptRow,
     WatchedSetupRow,
 )
 
@@ -78,8 +80,24 @@ def _side(setup_type: ScannerSetupType) -> Side:
     return Side.LONG if setup_type.value.endswith("_LONG") else Side.SHORT
 
 
-def _aware(value: datetime | None) -> bool:
-    return value is not None and value.tzinfo is not None and value.utcoffset() is not None
+def _db_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _stored_number(value: object, *, positive: bool = False) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not number.is_finite() or (number <= 0 if positive else number < 0):
+        return None
+    return float(number)
 
 
 def _range_reference(
@@ -143,11 +161,31 @@ def _macro_reference(
     )
 
 
+def _expected_reference_source(
+    setup_type: ScannerSetupType, side: Side
+) -> TriggerReferenceSource:
+    if setup_type == ScannerSetupType.RANGE_LONG:
+        return TriggerReferenceSource.RANGE_LOW
+    if setup_type == ScannerSetupType.RANGE_SHORT:
+        return TriggerReferenceSource.RANGE_HIGH
+    if setup_type in {
+        ScannerSetupType.TREND_PULLBACK_LONG,
+        ScannerSetupType.TREND_PULLBACK_SHORT,
+    }:
+        return (
+            TriggerReferenceSource.FIB_ZONE_LOWER
+            if side == Side.LONG
+            else TriggerReferenceSource.FIB_ZONE_UPPER
+        )
+    return TriggerReferenceSource.ACCEPTED_BREAKOUT_LEVEL
+
+
 def resolve_trigger_context(
     *,
     watched: WatchedSetupRow,
     watchlist: ScannerWatchlistRow,
     transitions: Iterable[ScannerTransitionRow],
+    existing_attempt: TriggerAttemptRow | None = None,
 ) -> TriggerContextResolution:
     setup_type = ScannerSetupType(watched.setup_type)
     side = _side(setup_type)
@@ -206,7 +244,7 @@ def resolve_trigger_context(
         if transition.watched_setup_id == watched.id
         and transition.to_status == ScannerStatus.TRIGGER_ARMED.value
     ]
-    if any(not _aware(transition.timestamp) for transition in armed_transitions):
+    if any(_db_utc(transition.timestamp) is None for transition in armed_transitions):
         return _blocked(
             watched,
             setup_type,
@@ -217,18 +255,18 @@ def resolve_trigger_context(
     if armed_transitions:
         transition = max(
             armed_transitions,
-            key=lambda item: (item.timestamp, item.version, item.id),
+            key=lambda item: (_db_utc(item.timestamp), item.version, item.id),
         )
-        armed_at = transition.timestamp
+        armed_at = _db_utc(transition.timestamp)
         arm_source = TriggerArmSource.ARM_TRANSITION
         arm_transition_id = transition.id
         arm_key = f"TRANSITION:{transition.id}"
         armed_state = transition.state_after
-    elif watched.version == 1 and _aware(watched.created_at):
-        armed_at = watched.created_at
+    elif watched.version == 1 and _db_utc(watched.created_at) is not None:
+        armed_at = _db_utc(watched.created_at)
         arm_source = TriggerArmSource.FIRST_OBSERVATION_BASELINE
         arm_transition_id = None
-        arm_key = f"BASELINE:{watched.id}:{watched.created_at.isoformat()}"
+        arm_key = f"BASELINE:{watched.id}:{armed_at.isoformat()}"
         armed_state = watched.state
     else:
         return _blocked(
@@ -238,6 +276,67 @@ def resolve_trigger_context(
             "ARMED_AT_UNRESOLVED",
             retest_tolerance_bps=retest_tolerance,
         )
+    if (
+        existing_attempt is not None
+        and existing_attempt.watched_setup_id == watched.id
+        and existing_attempt.arm_key == arm_key
+    ):
+        attempt_armed_at = _db_utc(existing_attempt.armed_at)
+        attempt_level = _stored_number(existing_attempt.reference_level, positive=True)
+        attempt_retest = _stored_number(existing_attempt.retest_tolerance_bps)
+        attempt_failure = _stored_number(existing_attempt.failure_tolerance_bps)
+        metadata = existing_attempt.reference_metadata
+        try:
+            attempt_arm_source = TriggerArmSource(existing_attempt.arm_source)
+            attempt_reference_source = TriggerReferenceSource(
+                existing_attempt.reference_source
+            )
+        except (TypeError, ValueError):
+            attempt_arm_source = None
+            attempt_reference_source = None
+        valid_provenance = (
+            existing_attempt.symbol == watched.symbol
+            and existing_attempt.setup_type == setup_type.value
+            and attempt_arm_source == arm_source
+            and existing_attempt.arm_transition_id == arm_transition_id
+            and attempt_armed_at == armed_at
+            and attempt_reference_source == _expected_reference_source(setup_type, side)
+        )
+        if (
+            attempt_armed_at is None
+            or attempt_level is None
+            or attempt_retest is None
+            or attempt_failure is None
+            or attempt_arm_source is None
+            or attempt_reference_source is None
+            or not isinstance(metadata, Mapping)
+            or not valid_provenance
+        ):
+            return _blocked(
+                watched,
+                setup_type,
+                side,
+                "TRIGGER_ATTEMPT_CONTEXT_INVALID",
+                retest_tolerance_bps=retest_tolerance,
+            )
+        return TriggerContextResolution(
+            symbol=watched.symbol,
+            watched_setup_id=watched.id,
+            setup_type=setup_type,
+            side=side,
+            eligible=True,
+            armed_at=attempt_armed_at,
+            arm_source=attempt_arm_source,
+            arm_key=arm_key,
+            arm_transition_id=existing_attempt.arm_transition_id,
+            reference_level=attempt_level,
+            reference_source=attempt_reference_source,
+            armed_state=deepcopy(dict(armed_state)) if isinstance(armed_state, Mapping) else {},
+            retest_tolerance_bps=attempt_retest,
+            failure_tolerance_bps=attempt_failure,
+            reference_metadata=deepcopy(dict(metadata)),
+        )
+
     if not isinstance(armed_state, Mapping):
         return _blocked(
             watched,

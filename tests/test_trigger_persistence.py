@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 import pytest_asyncio
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from trading_copilot.domain.models import Side
 from trading_copilot.domain.scanner import ScannerSetupType
 from trading_copilot.domain.trigger import (
+    LowerTimeframeTriggerSnapshot,
     TriggerArmSource,
     TriggerPattern,
     TriggerReferenceSource,
@@ -19,11 +21,16 @@ from trading_copilot.domain.trigger import (
 from trading_copilot.persistence.models import (
     Base,
     ScannerTransitionRow,
+    ScannerWatchlistRow,
     TriggerAttemptRow,
     TriggerTransitionRow,
     WatchedSetupRow,
 )
-from trading_copilot.services.trigger_context import TriggerContextResolution
+from trading_copilot.services.trigger_context import (
+    TriggerContextResolution,
+    compose_trigger_request,
+    resolve_trigger_context,
+)
 from trading_copilot.services.trigger_persistence import (
     TriggerPersistenceConsistencyError,
     persist_trigger_result,
@@ -132,6 +139,18 @@ async def seed_watched(session, setup_id="setup-1", symbol="BTCUSDT"):
     session.add(row)
     await session.commit()
     return row
+
+
+def scanner_watchlist(*, tolerance="20"):
+    return ScannerWatchlistRow(
+        id="watch-1",
+        symbol="BTCUSDT",
+        enabled=True,
+        enabled_playbooks=["RANGE"],
+        approach_tolerance_bps=Decimal(50),
+        retest_tolerance_bps=Decimal(tolerance),
+        acceptance_bars=2,
+    )
 
 
 def aware(value):
@@ -460,6 +479,161 @@ async def test_existing_attempt_context_mismatch_rejects_without_mutation(databa
 
     assert reloaded.version == 1
     assert reloaded.state == TriggerState.RECLAIMED.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("arm_source", TriggerArmSource.FIRST_OBSERVATION_BASELINE),
+        ("arm_transition_id", "different-arm"),
+        ("reference_source", TriggerReferenceSource.RANGE_HIGH),
+        ("reference_metadata", {"boundary": "different"}),
+        ("retest_tolerance_bps", 21),
+        ("failure_tolerance_bps", 26),
+    ],
+)
+async def test_all_existing_attempt_context_fields_reject_drift(database, field, value):
+    _, sessions = database
+    async with sessions() as session:
+        await seed_watched(session)
+        original = await persist_trigger_result(
+            session, context=context(), result=result()
+        )
+        attempt_id = original.id
+        changed_context = replace(context(), **{field: value})
+        with pytest.raises(TriggerPersistenceConsistencyError, match="context mismatch"):
+            await persist_trigger_result(
+                session, context=changed_context, result=result()
+            )
+        await session.rollback()
+        reloaded = await session.get(TriggerAttemptRow, attempt_id)
+
+    assert reloaded.version == 1
+    assert reloaded.result == result().model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_reference_metadata_dict_insertion_order_is_equal(database):
+    _, sessions = database
+    initial_context = replace(
+        context(), reference_metadata={"active_zone": "primary", "x": 1}
+    )
+    reordered_context = replace(
+        context(), reference_metadata={"x": 1, "active_zone": "primary"}
+    )
+    async with sessions() as session:
+        await seed_watched(session)
+        await persist_trigger_result(
+            session, context=initial_context, result=result()
+        )
+        updated = await persist_trigger_result(
+            session, context=reordered_context, result=result()
+        )
+
+    assert updated.version == 1
+
+
+@pytest.mark.asyncio
+async def test_sqlite_baseline_and_attempt_round_trip_freeze_context(database):
+    _, sessions = database
+    async with sessions() as session:
+        session.add_all(
+            [
+                WatchedSetupRow(
+                    id="setup-1",
+                    symbol="BTCUSDT",
+                    setup_type=ScannerSetupType.RANGE_LONG.value,
+                    status="TRIGGER_ARMED",
+                    state={"location": {"range_low": 100, "range_high": 110}},
+                    version=1,
+                    created_at=ARMED_AT,
+                ),
+                scanner_watchlist(),
+            ]
+        )
+        await session.commit()
+
+    async with sessions() as session:
+        watched_row = await session.get(WatchedSetupRow, "setup-1")
+        watchlist_row = await session.get(ScannerWatchlistRow, "watch-1")
+        resolved = resolve_trigger_context(
+            watched=watched_row, watchlist=watchlist_row, transitions=[]
+        )
+        assert resolved.armed_at.tzinfo is not None
+        persisted = await persist_trigger_result(
+            session,
+            context=resolved,
+            result=result(armed_at=resolved.armed_at, reference_level=100),
+        )
+        attempt_id = persisted.id
+        watched_row.state = {"location": {"range_low": 101, "range_high": 110}}
+        watchlist_row.retest_tolerance_bps = Decimal(50)
+        await session.commit()
+
+    async with sessions() as session:
+        watched_row = await session.get(WatchedSetupRow, "setup-1")
+        watchlist_row = await session.get(ScannerWatchlistRow, "watch-1")
+        existing = await session.get(TriggerAttemptRow, attempt_id)
+        rehydrated = resolve_trigger_context(
+            watched=watched_row,
+            watchlist=watchlist_row,
+            transitions=[],
+            existing_attempt=existing,
+        )
+
+    assert rehydrated.eligible
+    assert rehydrated.reference_level == 100
+    assert rehydrated.retest_tolerance_bps == 20
+    assert rehydrated.armed_at.tzinfo is not None
+    assert rehydrated.armed_at.utcoffset() == timedelta(0)
+
+
+@pytest.mark.asyncio
+async def test_sqlite_transition_round_trip_composes_aware_request(database):
+    _, sessions = database
+    async with sessions() as session:
+        watched_row = await seed_watched(session)
+        session.add(scanner_watchlist())
+        session.add(
+            ScannerTransitionRow(
+                id="arm-a",
+                watched_setup_id=watched_row.id,
+                symbol="BTCUSDT",
+                setup_type=ScannerSetupType.RANGE_LONG.value,
+                from_status="REACTION_DEVELOPING",
+                to_status="TRIGGER_ARMED",
+                timestamp=ARMED_AT,
+                state_before={},
+                state_after={"location": {"range_low": 100, "range_high": 110}},
+                version=2,
+            )
+        )
+        await session.commit()
+
+    async with sessions() as session:
+        watched_row = await session.get(WatchedSetupRow, "setup-1")
+        watchlist_row = await session.get(ScannerWatchlistRow, "watch-1")
+        transitions = list(await session.scalars(select(ScannerTransitionRow)))
+        resolved = resolve_trigger_context(
+            watched=watched_row,
+            watchlist=watchlist_row,
+            transitions=transitions,
+        )
+        request = compose_trigger_request(
+            resolved,
+            LowerTimeframeTriggerSnapshot(
+                symbol="BTCUSDT",
+                evaluated_at=EVALUATED_AT,
+                bars_5m=[],
+                bars_15m=[],
+                data_status="READY",
+            ),
+        )
+
+    assert resolved.arm_key == "TRANSITION:arm-a"
+    assert request.armed_at.tzinfo is not None
+    assert request.armed_at.utcoffset() == timedelta(0)
 
 
 @pytest.mark.asyncio

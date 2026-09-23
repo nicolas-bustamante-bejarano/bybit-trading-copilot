@@ -66,10 +66,18 @@ def _validate_existing_context(
     attempt: TriggerAttemptRow, context: TriggerContextResolution
 ) -> None:
     mismatches: list[str] = []
+    if attempt.watched_setup_id != context.watched_setup_id:
+        mismatches.append("watched_setup_id")
     if attempt.symbol != context.symbol:
         mismatches.append("symbol")
     if attempt.setup_type != context.setup_type.value:
         mismatches.append("setup_type")
+    if attempt.arm_key != context.arm_key:
+        mismatches.append("arm_key")
+    if context.arm_source is None or attempt.arm_source != context.arm_source.value:
+        mismatches.append("arm_source")
+    if attempt.arm_transition_id != context.arm_transition_id:
+        mismatches.append("arm_transition_id")
     if context.armed_at is None or _utc(attempt.armed_at) != _utc(context.armed_at):
         mismatches.append("armed_at")
     if context.reference_level is None or attempt.reference_level != _level(
@@ -81,6 +89,12 @@ def _validate_existing_context(
         or attempt.reference_source != context.reference_source.value
     ):
         mismatches.append("reference_source")
+    if attempt.reference_metadata != context.reference_metadata:
+        mismatches.append("reference_metadata")
+    if attempt.retest_tolerance_bps != Decimal(str(context.retest_tolerance_bps)):
+        mismatches.append("retest_tolerance_bps")
+    if attempt.failure_tolerance_bps != Decimal(str(context.failure_tolerance_bps)):
+        mismatches.append("failure_tolerance_bps")
     if mismatches:
         raise TriggerPersistenceConsistencyError(
             f"existing trigger attempt context mismatch: {mismatches[0]}"
