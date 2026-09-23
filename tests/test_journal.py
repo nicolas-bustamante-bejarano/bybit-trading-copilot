@@ -223,3 +223,29 @@ async def test_preplan_market_definitions_allow_no_plan_and_normalize_symbols(tm
         assert [record.trade_plan_id for record in records] == [None, None, None]
         assert [record.symbol for record in records] == ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_workspace_plan_fields_patch_and_active_side_change_is_safe(journal_client):
+    plan = await _create_plan(journal_client, "BTCUSDT")
+    patched = await journal_client.patch(
+        f"/trade-plans/{plan['id']}",
+        json={"setup_type": "TREND_PULLBACK", "thesis": "Updated", "hard_invalidation": "2", "correlation_group": "crypto_beta", "entry_probe_plan": {"entry": "3"}, "add_conditions": [{"type": "BUYER_CONFIRMATION"}], "notes": "note"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["correlation_group"] == "crypto_beta"
+    await journal_client.patch(f"/trade-plans/{plan['id']}", json={"lifecycle_status": "ACTIVE"})
+    blocked = await journal_client.patch(f"/trade-plans/{plan['id']}", json={"side": "SHORT"})
+    assert blocked.status_code == 409
+    safe = await journal_client.patch(f"/trade-plans/{plan['id']}", json={"side": "SHORT", "lifecycle_status": "DRAFT"})
+    assert safe.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_fib_and_range_definitions_persist_and_read_back(journal_client):
+    plan = await _create_plan(journal_client, "ETHUSDT")
+    fib = await journal_client.put(f"/trade-plans/{plan['id']}/fib-definition", json={"direction": "LONG", "swing_low": "100", "swing_high": "200"})
+    range_ = await journal_client.put(f"/trade-plans/{plan['id']}/range-definition", json={"range_low": "110", "range_high": "190"})
+    assert fib.status_code == range_.status_code == 200
+    assert (await journal_client.get(f"/trade-plans/{plan['id']}/fib-definitions")).json()[0]["symbol"] == "ETHUSDT"
+    assert (await journal_client.get(f"/trade-plans/{plan['id']}/range-definitions")).json()[0]["range_low"] == 110

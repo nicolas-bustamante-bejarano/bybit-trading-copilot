@@ -93,6 +93,7 @@ class CoachExecution(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     next_conditions: list[str] = Field(default_factory=list)
     invalidation: Decimal | None = None
+    condition_evidence: list[str] = Field(default_factory=list)
 
 
 class PositionCoach(BaseModel):

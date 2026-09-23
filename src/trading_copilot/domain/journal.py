@@ -61,10 +61,16 @@ class TradePlanCreate(BaseModel):
 
 
 class TradePlanPatch(BaseModel):
+    symbol: str | None = None
+    side: Side | None = None
+    setup_type: str | None = None
+    thesis: str | None = None
     lifecycle_status: str | None = None
+    hard_invalidation: Decimal | None = None
     thesis_warning: Decimal | None = None
     max_risk_percent: Decimal | None = Field(default=None, gt=0, le=1)
     max_risk_value: Decimal | None = Field(default=None, ge=0)
+    correlation_group: str | None = None
     entry_probe_plan: dict[str, Any] | None = None
     add_conditions: list[dict[str, Any]] | None = None
     target_ladder: list[Target] | None = None

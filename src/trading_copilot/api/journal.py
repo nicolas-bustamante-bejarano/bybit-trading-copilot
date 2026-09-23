@@ -10,11 +10,14 @@ from trading_copilot.domain.journal import (
     TradePlanCreate,
     TradePlanPatch,
 )
+from trading_copilot.domain.workspace import FibDefinitionInput, RangeDefinitionInput
 from trading_copilot.persistence.database import get_session
 from trading_copilot.persistence.models import (
     DecisionSnapshotRow,
     ExecutionEventRow,
     ExecutionRuleRow,
+    FibDefinitionRow,
+    RangeDefinitionRow,
     TradePlanRow,
     TradeReviewRow,
 )
@@ -24,7 +27,10 @@ router = APIRouter(prefix="/trade-plans", tags=["trade journal"])
 
 
 def dump(row):
-    return {column.name: getattr(row, column.key) for column in row.__table__.columns}
+    return {
+        column.name: row.metadata_json if column.name == "metadata" else getattr(row, column.key)
+        for column in row.__table__.columns
+    }
 
 
 async def require_plan(session: AsyncSession, plan_id: str):
@@ -90,9 +96,20 @@ async def patch_plan(
     plan_id: str, body: TradePlanPatch, session: AsyncSession = Depends(get_session)
 ):
     plan = await require_plan(session, plan_id)
-    for key, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    if (
+        plan.lifecycle_status == "ACTIVE"
+        and any(key in updates for key in ("symbol", "side"))
+        and updates.get("lifecycle_status") != "DRAFT"
+    ):
+        raise HTTPException(409, "Return an active plan to DRAFT before changing symbol or side")
+    for key, value in updates.items():
         if key == "target_ladder" and value is not None:
             value = [x.model_dump(mode="json") if hasattr(x, "model_dump") else x for x in value]
+        if key == "side" and value is not None:
+            value = value.value
+        if key == "symbol" and value is not None:
+            value = value.upper()
         setattr(plan, key, value)
     await session.commit()
     await session.refresh(plan)
@@ -187,4 +204,48 @@ async def get_review(plan_id: str, session: AsyncSession = Depends(get_session))
     )
     if row is None:
         raise HTTPException(404, "Trade review not found")
+    return dump(row)
+
+
+@router.get("/{plan_id}/fib-definitions")
+async def list_fibs(plan_id: str, session: AsyncSession = Depends(get_session)):
+    await require_plan(session, plan_id)
+    rows = await session.scalars(select(FibDefinitionRow).where(FibDefinitionRow.trade_plan_id == plan_id))
+    return [dump(row) for row in rows]
+
+
+@router.put("/{plan_id}/fib-definition")
+async def put_fib(plan_id: str, body: FibDefinitionInput, session: AsyncSession = Depends(get_session)):
+    plan = await require_plan(session, plan_id)
+    row = await session.scalar(select(FibDefinitionRow).where(FibDefinitionRow.trade_plan_id == plan_id))
+    if row is None:
+        row = FibDefinitionRow(trade_plan_id=plan_id, symbol=plan.symbol, **body.model_dump())
+        session.add(row)
+    else:
+        for key, value in body.model_dump().items():
+            setattr(row, key, value)
+    await session.commit()
+    await session.refresh(row)
+    return dump(row)
+
+
+@router.get("/{plan_id}/range-definitions")
+async def list_ranges(plan_id: str, session: AsyncSession = Depends(get_session)):
+    await require_plan(session, plan_id)
+    rows = await session.scalars(select(RangeDefinitionRow).where(RangeDefinitionRow.trade_plan_id == plan_id))
+    return [dump(row) for row in rows]
+
+
+@router.put("/{plan_id}/range-definition")
+async def put_range(plan_id: str, body: RangeDefinitionInput, session: AsyncSession = Depends(get_session)):
+    plan = await require_plan(session, plan_id)
+    row = await session.scalar(select(RangeDefinitionRow).where(RangeDefinitionRow.trade_plan_id == plan_id))
+    if row is None:
+        row = RangeDefinitionRow(trade_plan_id=plan_id, symbol=plan.symbol, **body.model_dump())
+        session.add(row)
+    else:
+        for key, value in body.model_dump().items():
+            setattr(row, key, value)
+    await session.commit()
+    await session.refresh(row)
     return dump(row)

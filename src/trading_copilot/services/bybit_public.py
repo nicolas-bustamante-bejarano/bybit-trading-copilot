@@ -56,3 +56,11 @@ class BybitPublicClient:
             },
         )
         return result["list"]
+
+    async def instrument(self, symbol: str) -> dict:
+        result = await self._get(
+            "/v5/market/instruments-info", {"category": "linear", "symbol": symbol}
+        )
+        if not result.get("list"):
+            raise RuntimeError(f"No linear instrument metadata for {symbol}")
+        return result["list"][0]

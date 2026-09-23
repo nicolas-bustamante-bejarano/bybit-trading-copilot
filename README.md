@@ -109,6 +109,9 @@ POST /execution/project-add
 - `POST /playbook/evaluate`
 - `POST /risk/position-size`
 - `POST /risk/portfolio`
+- `GET /market/{symbol}/chart` — public historical candles with 12/21 EMA values for the workspace
+- `GET|POST /chart-structures` and `PATCH|DELETE /chart-structures/{id}` — persisted manual chart structure
+- `POST /workspace/sizing` — read-only, stop-based staged sizing and margin estimate
 - `POST /execution/plan`
 - `POST /execution/project-add`
 - `POST /trade-plans`

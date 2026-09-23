@@ -30,7 +30,7 @@ export interface Coach {
   plan: { status: EvidenceStatus; trade_plan_id: string | null; setup_type: string | null; lifecycle_status: string | null; thesis: string | null; hard_invalidation: string | null; thesis_warning: string | null; correlation_group: string | null; targets: Record<string, unknown>[]; stop_provenance: string };
   market_context: { status: EvidenceStatus; regime_4h: string | null; context_1h: string | null; ema_12: string | null; ema_21: string | null; stoch_rsi: { k?: string | null; d?: string | null }; location: string; location_status: EvidenceStatus; playbook_state: string | null; reaction: string | null; reaction_status: EvidenceStatus; funding: string | null; open_interest: string | null };
   risk: { account_equity: string; position_structural_risk_usdt: string | null; position_risk_pct: string | null; correlation_group: string; known_group_risk_usdt: string; group_risk_pct: string | null; max_risk_pct: string | null; policy_status: RiskStatus; provenance: Record<string, string>; incomplete_symbols: string[] };
-  execution: { state: ExecutionState; add_allowed: boolean; evidence_present: string[]; evidence_missing: string[]; blocking_reasons: string[]; warnings: string[]; next_conditions: string[]; invalidation: string | null };
+  execution: { state: ExecutionState; add_allowed: boolean; evidence_present: string[]; evidence_missing: string[]; blocking_reasons: string[]; warnings: string[]; next_conditions: string[]; invalidation: string | null; condition_evidence: string[] };
 }
 export interface ExecutionRule { id: string; action: string; rule_type: string; description: string; parameters: Record<string, unknown>; ordering: number }
 export interface TradePlan {
@@ -53,3 +53,7 @@ export interface StateChangeMonitorStatus {
   enabled: boolean; running: boolean; interval_seconds: number; last_cycle_at: string | null;
   last_success_at: string | null; last_error: string | null;
 }
+export interface Candle { time: number; open: number; high: number; low: number; close: number; volume: number; ema12: number; ema21: number }
+export interface Chart { symbol: string; timeframe: string; candles: Candle[] }
+export interface ChartStructure { id: string; symbol: string; timeframe: string; structure_type: "HORIZONTAL_ZONE" | "TRENDLINE"; label: string | null; lower_price: string | null; upper_price: string | null; anchor_one_time: number | null; anchor_one_price: string | null; anchor_two_time: number | null; anchor_two_price: string | null; active: boolean }
+export interface Sizing { maximum_quantity: string; maximum_notional: string; permitted_risk_usdt: string; risk_per_unit_usdt: string; estimated_margin_usdt: string | null; minimum_leverage_for_margin_fit: string | null; group_risk_used_usdt: string; group_risk_remaining_usdt: string; risk_budget_usdt: string; stop_distance: string; margin_percent_equity: string | null; liquidation_status: string; stages: { state: string; quantity: string; notional: string; stage_risk_usdt: string; cumulative_quantity: string; cumulative_risk_usdt: string; remaining_unlockable_risk_usdt: string; allowed: boolean; status: string; reasons: string[] }[] }
