@@ -96,3 +96,47 @@ export interface ScannerTransition {
   from_status: ScannerStatus | null; to_status: ScannerStatus; timestamp: string;
   state_before: ScannerSetupState; state_after: ScannerSetupState; version: number;
 }
+
+export type TriggerState = "WAITING" | "DEVELOPING" | "RECLAIMED" | "RETEST_HELD" | "CONFIRMED" | "FAILED" | "INDETERMINATE";
+export type TriggerPattern = "DEVIATION_RECLAIM" | "RETEST_HOLD";
+export type TriggerArmSource = "ARM_TRANSITION" | "FIRST_OBSERVATION_BASELINE";
+export type TriggerReferenceSource = "RANGE_LOW" | "RANGE_HIGH" | "FIB_ZONE_LOWER" | "FIB_ZONE_UPPER" | "ACCEPTED_BREAKOUT_LEVEL";
+export interface TriggerResult {
+  symbol: string; setup_type: ScannerSetupType; side: "long" | "short";
+  pattern: TriggerPattern; state: TriggerState; reference_level: number;
+  armed_at: string; evaluated_at: string; trigger_confirmed: boolean;
+  anchor_bar_end_ms: number | null; confirmation_bar_end_ms: number | null;
+  local_15m_acceptance: boolean | null; reaction_state: string | null;
+  reaction_supportive: boolean | null; anchor_high: number | null; anchor_low: number | null;
+  anchor_close: number | null; confirmation_close: number | null;
+  evidence_present: string[]; evidence_missing: string[]; blocking_reasons: string[];
+  next_conditions: string[];
+}
+export interface TriggerAttempt {
+  id: string; watched_setup_id: string; symbol: string; setup_type: ScannerSetupType;
+  arm_key: string; arm_source: TriggerArmSource; arm_transition_id: string | null;
+  armed_at: string; reference_level: number; reference_source: TriggerReferenceSource;
+  reference_metadata: Record<string, unknown>; retest_tolerance_bps: number;
+  failure_tolerance_bps: number; state: TriggerState; result: TriggerResult; version: number;
+  first_evaluated_at: string; last_evaluated_at: string; created_at: string; updated_at: string;
+}
+export interface TriggerTransition {
+  id: string; trigger_attempt_id: string; symbol: string; setup_type: ScannerSetupType;
+  from_state: TriggerState | null; to_state: TriggerState; timestamp: string;
+  result_before: TriggerResult; result_after: TriggerResult; version: number;
+}
+export interface TriggerCurrent {
+  watched_setup_id: string; symbol: string; setup_type: ScannerSetupType;
+  scanner_status: ScannerStatus; eligible: boolean; blocking_reason: string | null;
+  arm_key: string | null; arm_source: TriggerArmSource | null; armed_at: string | null;
+  reference_level: number | null; reference_source: TriggerReferenceSource | null;
+  attempt: TriggerAttempt | null; terminal: boolean;
+}
+export interface TriggerMonitorStatus {
+  enabled: boolean; running: boolean; interval_seconds: number;
+  last_cycle_started_at: string | null; last_cycle_completed_at: string | null;
+  last_success_at: string | null; last_error: string | null; last_cycle_duration_ms: number | null;
+  armed_candidate_count: number; eligible_candidate_count: number; evaluation_count: number;
+  persisted_count: number; confirmed_count: number; terminal_count: number;
+  evaluated_symbols: string[]; failed_symbols: string[];
+}

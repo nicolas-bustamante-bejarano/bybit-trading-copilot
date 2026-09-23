@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from trading_copilot.domain.models import Side
-from trading_copilot.domain.scanner import ScannerSetupType
+from trading_copilot.domain.scanner import ScannerSetupType, ScannerStatus
 
 
 class TriggerPattern(StrEnum):
@@ -151,3 +152,80 @@ class TriggerResult(BaseModel):
     evidence_missing: list[str] = Field(default_factory=list)
     blocking_reasons: list[str] = Field(default_factory=list)
     next_conditions: list[str] = Field(default_factory=list)
+
+
+class TriggerMonitorStatusResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    enabled: bool
+    running: bool
+    interval_seconds: float
+    last_cycle_started_at: datetime | None = None
+    last_cycle_completed_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+    last_cycle_duration_ms: float | None = None
+    armed_candidate_count: int = 0
+    eligible_candidate_count: int = 0
+    evaluation_count: int = 0
+    persisted_count: int = 0
+    confirmed_count: int = 0
+    terminal_count: int = 0
+    evaluated_symbols: list[str] = Field(default_factory=list)
+    failed_symbols: list[str] = Field(default_factory=list)
+
+
+class TriggerAttemptResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    watched_setup_id: str
+    symbol: str
+    setup_type: ScannerSetupType
+    arm_key: str
+    arm_source: TriggerArmSource
+    arm_transition_id: str | None
+    armed_at: datetime
+    reference_level: float
+    reference_source: TriggerReferenceSource
+    reference_metadata: dict[str, Any]
+    retest_tolerance_bps: float
+    failure_tolerance_bps: float
+    state: TriggerState
+    result: TriggerResult
+    version: int
+    first_evaluated_at: datetime
+    last_evaluated_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class TriggerTransitionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    trigger_attempt_id: str
+    symbol: str
+    setup_type: ScannerSetupType
+    from_state: TriggerState | None
+    to_state: TriggerState
+    timestamp: datetime
+    result_before: TriggerResult
+    result_after: TriggerResult
+    version: int
+
+
+class CurrentTriggerResponse(BaseModel):
+    watched_setup_id: str
+    symbol: str
+    setup_type: ScannerSetupType
+    scanner_status: ScannerStatus
+    eligible: bool
+    blocking_reason: str | None = None
+    arm_key: str | None = None
+    arm_source: TriggerArmSource | None = None
+    armed_at: datetime | None = None
+    reference_level: float | None = None
+    reference_source: TriggerReferenceSource | None = None
+    attempt: TriggerAttemptResponse | None = None
+    terminal: bool = False

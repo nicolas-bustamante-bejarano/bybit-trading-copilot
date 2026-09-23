@@ -11,6 +11,8 @@ from trading_copilot.api.scanner import router as scanner_router
 from trading_copilot.api.scanner import set_status_provider as set_scanner_status_provider
 from trading_copilot.api.state_changes import router as state_changes_router
 from trading_copilot.api.state_changes import set_status_provider
+from trading_copilot.api.trigger import router as trigger_router
+from trading_copilot.api.trigger import set_trigger_status_provider
 from trading_copilot.api.workspace import router as workspace_router
 from trading_copilot.config import settings
 from trading_copilot.domain.execution import AddProjectionRequest, ExecutionPlanRequest
@@ -119,6 +121,7 @@ async def lifespan(_: FastAPI):
         sessions=session_factory,
         build_snapshot=_build_trigger_snapshot,
     )
+    set_trigger_status_provider(trigger_monitor.status)
     if settings.trigger_monitor_enabled:
         trigger_monitor_task = asyncio.create_task(trigger_monitor.run())
     try:
@@ -151,6 +154,7 @@ app.include_router(journal_router)
 app.include_router(workspace_router)
 app.include_router(state_changes_router)
 app.include_router(scanner_router)
+app.include_router(trigger_router)
 
 
 @app.get("/health")

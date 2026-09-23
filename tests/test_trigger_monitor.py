@@ -732,6 +732,9 @@ async def test_lifespan_starts_and_cancels_one_trigger_monitor(monkeypatch):
             self.cancelled = False
             instances.append(self)
 
+        def status(self):
+            return None
+
         async def run(self):
             self.started.set()
             try:
