@@ -7,6 +7,7 @@ from uuid import uuid4
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -129,9 +130,49 @@ class TradeReviewRow(ChildBase, Base):
 
 class WatchedSetupRow(SymbolMixin, OptionalPlanChildBase, Base):
     __tablename__ = "watched_setups"
+    __table_args__ = (UniqueConstraint("symbol", "setup_type", name="uq_watched_setups_symbol_type"),)
     setup_type: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32))
     state: Mapped[dict] = mapped_column(JSON, default=dict)
+    version: Mapped[int] = mapped_column(default=1)
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ScannerWatchlistRow(SymbolMixin, Base):
+    __tablename__ = "scanner_watchlist"
+    __table_args__ = (
+        UniqueConstraint("symbol", name="uq_scanner_watchlist_symbol"),
+        CheckConstraint("acceptance_bars >= 1", name="ck_scanner_watchlist_acceptance_bars"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    enabled_playbooks: Mapped[list] = mapped_column(JSON, default=list)
+    approach_tolerance_bps: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=50)
+    retest_tolerance_bps: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=25)
+    acceptance_bars: Mapped[int] = mapped_column(default=2)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ScannerTransitionRow(SymbolMixin, Base):
+    __tablename__ = "scanner_transitions"
+    __table_args__ = (
+        UniqueConstraint("watched_setup_id", "version", name="uq_scanner_transition_version"),
+        Index("ix_scanner_transition_symbol_time", "symbol", "timestamp"),
+        Index("ix_scanner_transition_type_time", "setup_type", "timestamp"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    watched_setup_id: Mapped[str] = mapped_column(
+        ForeignKey("watched_setups.id", ondelete="CASCADE")
+    )
+    setup_type: Mapped[str] = mapped_column(String(64))
+    from_status: Mapped[str | None] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    state_before: Mapped[dict] = mapped_column(JSON, default=dict)
+    state_after: Mapped[dict] = mapped_column(JSON, default=dict)
+    version: Mapped[int] = mapped_column()
 
 
 class FibDefinitionRow(SymbolMixin, OptionalPlanChildBase, Base):
