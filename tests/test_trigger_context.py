@@ -565,28 +565,106 @@ def test_existing_attempt_freezes_baseline_reference_and_tolerances():
     assert resolved.retest_tolerance_bps == 17.5
 
 
-def test_existing_attempt_freezes_transition_context():
+def test_matching_transition_attempt_ignores_mutable_watched_state():
     armed = transition(range_state(100, 110), transition_id="arm-a")
     initial = resolve_trigger_context(
         watched=watched(), watchlist=watchlist(), transitions=[armed]
     )
     existing = attempt_for(
         initial,
-        reference_level=Decimal(99),
-        reference_metadata={"nested": {"source": "persisted"}},
         failure_tolerance_bps=Decimal(30),
+    )
+    mutable_row = watched(state=range_state(101, 110))
+    changed_watchlist = watchlist()
+    changed_watchlist.retest_tolerance_bps = Decimal(50)
+
+    resolved = resolve_trigger_context(
+        watched=mutable_row,
+        watchlist=changed_watchlist,
+        transitions=[armed],
+        existing_attempt=existing,
+    )
+
+    assert resolved.eligible
+    assert resolved.reference_level == 100
+    assert resolved.retest_tolerance_bps == 17.5
+    assert resolved.failure_tolerance_bps == 30
+
+
+def test_transition_attempt_reference_level_mismatch_blocks():
+    armed = transition(range_state(100, 110), transition_id="arm-a")
+    initial = resolve_trigger_context(
+        watched=watched(), watchlist=watchlist(), transitions=[armed]
     )
 
     resolved = resolve_trigger_context(
         watched=watched(),
         watchlist=watchlist(),
         transitions=[armed],
-        existing_attempt=existing,
+        existing_attempt=attempt_for(initial, reference_level=Decimal(99)),
     )
 
-    assert resolved.reference_level == 99
-    assert resolved.reference_metadata == {"nested": {"source": "persisted"}}
-    assert resolved.failure_tolerance_bps == 30
+    assert not resolved.eligible
+    assert resolved.blocking_reason == "TRIGGER_ATTEMPT_CONTEXT_INVALID"
+
+
+def test_transition_attempt_reference_source_mismatch_blocks():
+    armed = transition(range_state(100, 110), transition_id="arm-a")
+    initial = resolve_trigger_context(
+        watched=watched(), watchlist=watchlist(), transitions=[armed]
+    )
+
+    resolved = resolve_trigger_context(
+        watched=watched(),
+        watchlist=watchlist(),
+        transitions=[armed],
+        existing_attempt=attempt_for(
+            initial, reference_source=TriggerReferenceSource.RANGE_HIGH.value
+        ),
+    )
+
+    assert not resolved.eligible
+    assert resolved.blocking_reason == "TRIGGER_ATTEMPT_CONTEXT_INVALID"
+
+
+def test_transition_attempt_reference_metadata_mismatch_blocks():
+    state = trend_state(active="primary")
+    row = watched(ScannerSetupType.TREND_PULLBACK_LONG, state=state)
+    armed = transition(state, transition_id="arm-a")
+    armed.setup_type = row.setup_type
+    initial = resolve_trigger_context(
+        watched=row, watchlist=watchlist(), transitions=[armed]
+    )
+
+    resolved = resolve_trigger_context(
+        watched=row,
+        watchlist=watchlist(),
+        transitions=[armed],
+        existing_attempt=attempt_for(
+            initial, reference_metadata={"active_zone": "deep"}
+        ),
+    )
+
+    assert not resolved.eligible
+    assert resolved.blocking_reason == "TRIGGER_ATTEMPT_CONTEXT_INVALID"
+
+
+def test_existing_attempt_cannot_bypass_malformed_transition_snapshot():
+    armed = transition(range_state(100, 110), transition_id="arm-a")
+    initial = resolve_trigger_context(
+        watched=watched(), watchlist=watchlist(), transitions=[armed]
+    )
+    armed.state_after = {"location": {"range_low": None, "range_high": 110}}
+
+    resolved = resolve_trigger_context(
+        watched=watched(),
+        watchlist=watchlist(),
+        transitions=[armed],
+        existing_attempt=attempt_for(initial),
+    )
+
+    assert not resolved.eligible
+    assert resolved.blocking_reason == "TRIGGER_ATTEMPT_CONTEXT_INVALID"
 
 
 def test_old_attempt_is_ignored_after_rearm_and_new_config_is_used():

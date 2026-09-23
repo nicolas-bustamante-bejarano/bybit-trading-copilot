@@ -180,6 +180,26 @@ def _expected_reference_source(
     return TriggerReferenceSource.ACCEPTED_BREAKOUT_LEVEL
 
 
+def _reference_from_state(
+    state: Mapping[str, Any], setup_type: ScannerSetupType, side: Side
+) -> tuple[float | None, TriggerReferenceSource, dict[str, Any], str]:
+    if setup_type in {ScannerSetupType.RANGE_LONG, ScannerSetupType.RANGE_SHORT}:
+        level, source, metadata = _range_reference(state, setup_type)
+        return level, source, metadata, "TRIGGER_REFERENCE_REQUIRED"
+    if setup_type in {
+        ScannerSetupType.TREND_PULLBACK_LONG,
+        ScannerSetupType.TREND_PULLBACK_SHORT,
+    }:
+        level, source, metadata = _trend_reference(state, side)
+        return level, source, metadata, "TRIGGER_REFERENCE_REQUIRED"
+    level, source, metadata = _macro_reference(state, side)
+    return level, source, metadata, "ACCEPTED_BREAKOUT_REFERENCE_REQUIRED"
+
+
+def _same_number(left: float, right: float) -> bool:
+    return Decimal(str(left)) == Decimal(str(right))
+
+
 def resolve_trigger_context(
     *,
     watched: WatchedSetupRow,
@@ -302,6 +322,21 @@ def resolve_trigger_context(
             and attempt_armed_at == armed_at
             and attempt_reference_source == _expected_reference_source(setup_type, side)
         )
+        valid_transition_reference = True
+        if arm_source == TriggerArmSource.ARM_TRANSITION:
+            if not isinstance(armed_state, Mapping):
+                valid_transition_reference = False
+            else:
+                expected_level, expected_source, expected_metadata, _ = (
+                    _reference_from_state(armed_state, setup_type, side)
+                )
+                valid_transition_reference = (
+                    expected_level is not None
+                    and attempt_level is not None
+                    and _same_number(attempt_level, expected_level)
+                    and attempt_reference_source == expected_source
+                    and metadata == expected_metadata
+                )
         if (
             attempt_armed_at is None
             or attempt_level is None
@@ -311,6 +346,7 @@ def resolve_trigger_context(
             or attempt_reference_source is None
             or not isinstance(metadata, Mapping)
             or not valid_provenance
+            or not valid_transition_reference
         ):
             return _blocked(
                 watched,
@@ -346,18 +382,9 @@ def resolve_trigger_context(
             retest_tolerance_bps=retest_tolerance,
         )
 
-    if setup_type in {ScannerSetupType.RANGE_LONG, ScannerSetupType.RANGE_SHORT}:
-        level, source, metadata = _range_reference(armed_state, setup_type)
-        missing_reason = "TRIGGER_REFERENCE_REQUIRED"
-    elif setup_type in {
-        ScannerSetupType.TREND_PULLBACK_LONG,
-        ScannerSetupType.TREND_PULLBACK_SHORT,
-    }:
-        level, source, metadata = _trend_reference(armed_state, side)
-        missing_reason = "TRIGGER_REFERENCE_REQUIRED"
-    else:
-        level, source, metadata = _macro_reference(armed_state, side)
-        missing_reason = "ACCEPTED_BREAKOUT_REFERENCE_REQUIRED"
+    level, source, metadata, missing_reason = _reference_from_state(
+        armed_state, setup_type, side
+    )
     if level is None:
         return _blocked(
             watched,
