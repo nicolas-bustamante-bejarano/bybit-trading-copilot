@@ -15,7 +15,7 @@ class Candle:
     volume: float
 
     @classmethod
-    def from_bybit(cls, row: list[str]) -> "Candle":
+    def from_bybit(cls, row: list[str]) -> Candle:
         return cls(
             start_ms=int(row[0]),
             open=float(row[1]),
@@ -303,16 +303,12 @@ def build_entry_replay_review(
     if not risk_valid or risk_policy_satisfied is False:
         decision = "BLOCK"
         grade = "F"
-    elif planned is False and confirmation_satisfied is not True:
+    elif (planned is False or thesis_flip) and confirmation_satisfied is not True:
         decision = "WAIT"
         grade = "D"
-    elif thesis_flip and confirmation_satisfied is not True:
-        decision = "WAIT"
-        grade = "D"
-    elif confirmation_satisfied is False:
-        decision = "WAIT"
-        grade = "C"
-    elif regime_15m["aligned"] is False and confirmation_satisfied is not True:
+    elif confirmation_satisfied is False or (
+        regime_15m["aligned"] is False and confirmation_satisfied is not True
+    ):
         decision = "WAIT"
         grade = "C"
     elif (
