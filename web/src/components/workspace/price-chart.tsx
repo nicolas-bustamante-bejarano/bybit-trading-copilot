@@ -1,8 +1,75 @@
 "use client";
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef } from "react";
-import { CandlestickSeries, ColorType, LineSeries, createChart, createSeriesMarkers } from "lightweight-charts";
+import { CandlestickSeries, ColorType, createChart, createSeriesMarkers, LineSeries } from "lightweight-charts";
 import type { Chart, ChartStructure, StateChange, TradePlan } from "@/lib/api/types";
-const supported=new Set(["REACTION_DEVELOPING","REACTION_CONFIRMED","THESIS_WARNING","RISK_BREACH","ADD_ALLOWED","ADD_LOCKED","REDUCE","EXIT","INVALIDATE","BREAKOUT_ATTEMPT","BREAKOUT_ACCEPTED","FAILED_BREAKOUT","RETEST_HOLD","TRIGGER_ARMED"]);
-export function stateChangeMarker(event: StateChange) { const time = Date.parse(event.timestamp); if (!supported.has(event.event_type) || !Number.isFinite(time)) return null; return { time: Math.floor(time / 1000) as never, position: (event.importance === "CRITICAL" ? "aboveBar" : "belowBar") as "aboveBar" | "belowBar", color: event.importance === "CRITICAL" ? "#fb7185" : "#f59e0b", shape: "circle" as const, text: event.event_type.replaceAll("_", " ") }; }
-export function PriceChart({chart,plan,structures,changes}:{chart:Chart|null;plan:TradePlan|null;structures:ChartStructure[];changes:StateChange[]}){const ref=useRef<HTMLDivElement>(null),bars=useRef<ReturnType<typeof createChart>|null>(null),series=useRef<ReturnType<typeof createChart> extends infer _?any:null>(null),markers=useRef<any>(null);useEffect(()=>{if(!ref.current||bars.current)return;bars.current=createChart(ref.current,{height:520,width:ref.current.clientWidth,layout:{background:{type:ColorType.Solid,color:"#0b0f15"},textColor:"#94a3b8"}});series.current=bars.current.addSeries(CandlestickSeries,{upColor:"#34d399",downColor:"#fb7185",borderVisible:false,wickUpColor:"#34d399",wickDownColor:"#fb7185"});return()=>{bars.current?.remove();bars.current=null;series.current=null}},[]);useEffect(()=>{if(!chart||!bars.current||!series.current)return;series.current.setData(chart.candles.map(x=>({time:x.time as never,open:x.open,high:x.high,low:x.low,close:x.close})));bars.current.timeScale().fitContent()},[chart]);useEffect(()=>{if(!series.current)return;markers.current=createSeriesMarkers(series.current,changes.map(stateChangeMarker).filter(Boolean)as any)},[changes]);useEffect(()=>{if(!bars.current||!series.current)return;const level=(v:unknown,label:string,color:string)=>{if(v!==null&&v!==undefined&&v!=="")series.current.createPriceLine({price:Number(v),color,lineWidth:1,lineStyle:2,title:label})};if(plan){level((plan.entry_probe_plan as Record<string,unknown>).entry,"ENTRY / REFERENCE","#38bdf8");level(plan.thesis_warning,"THESIS WARNING","#f59e0b");level(plan.hard_invalidation,"HARD INVALIDATION","#fb7185");[...plan.target_ladder].sort((a,b)=>Number(a.ordering)-Number(b.ordering)).forEach((x,i)=>level(x.price,`TP${i+1}`,"#34d399"))}structures.filter(x=>x.active).forEach(x=>{if(x.structure_type==="HORIZONTAL_ZONE"){level(x.lower_price,`${x.label??"ZONE"} LOW`,"#f59e0b");level(x.upper_price,`${x.label??"ZONE"} HIGH`,"#f59e0b")}else if(x.anchor_one_time&&x.anchor_one_price&&x.anchor_two_time&&x.anchor_two_price){const trend=bars.current!.addSeries(LineSeries,{color:"#f59e0b",lineWidth:2,title:x.label??"TRENDLINE"});trend.setData([{time:x.anchor_one_time as never,value:Number(x.anchor_one_price)},{time:x.anchor_two_time as never,value:Number(x.anchor_two_price)}])}})},[plan,structures]);return <div ref={ref}/>}
+import type { Fib, Range } from "./fib-range-editor";
+
+const markerEvents = new Set(["REACTION_DEVELOPING", "REACTION_CONFIRMED", "THESIS_WARNING", "RISK_BREACH", "ADD_ALLOWED", "ADD_LOCKED", "REDUCE", "EXIT", "INVALIDATE"]);
+
+export function PriceChart({ chart, plan, structures, changes, fib, range }: { chart: Chart | null; plan: TradePlan | null; structures: ChartStructure[]; changes: StateChange[]; fib: Fib | null; range: Range | null }) {
+  const root = useRef<HTMLDivElement>(null);
+  const view = useRef<any>(null);
+  const bars = useRef<any>(null);
+  const markerPlugin = useRef<any>(null);
+  const fittedChart = useRef("");
+
+  useEffect(() => {
+    if (!root.current) return;
+    view.current = createChart(root.current, { height: 520, width: root.current.clientWidth, layout: { background: { type: ColorType.Solid, color: "#0b0f15" }, textColor: "#94a3b8" } });
+    bars.current = view.current.addSeries(CandlestickSeries, { upColor: "#34d399", downColor: "#fb7185" });
+    markerPlugin.current = createSeriesMarkers(bars.current, []);
+    return () => view.current?.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!chart || !bars.current) return;
+    bars.current.setData(chart.candles.map((candle) => ({ time: candle.time as never, open: candle.open, high: candle.high, low: candle.low, close: candle.close })));
+    const chartKey = `${chart.symbol}/${chart.timeframe}`;
+    if (fittedChart.current !== chartKey) { view.current.timeScale().fitContent(); fittedChart.current = chartKey; }
+  }, [chart]);
+
+  useEffect(() => {
+    markerPlugin.current?.setMarkers(changes.flatMap((change) => {
+      const timestamp = Date.parse(change.timestamp);
+      if (!markerEvents.has(change.event_type) || !Number.isFinite(timestamp)) return [];
+      return [{ time: Math.floor(timestamp / 1000) as never, position: "belowBar" as const, color: "#f59e0b", shape: "circle" as const, text: change.event_type }];
+    }));
+  }, [changes]);
+
+  useEffect(() => {
+    if (!bars.current || !view.current) return;
+    const lines: any[] = [];
+    const series: any[] = [];
+    const addLine = (value: unknown, label: string) => {
+      if (value === null || value === undefined || value === "" || !Number.isFinite(Number(value))) return;
+      lines.push(bars.current.createPriceLine({ price: Number(value), color: "#f59e0b", lineWidth: 1, lineStyle: 2, title: label }));
+    };
+    if (plan) {
+      addLine((plan.entry_probe_plan as Record<string, unknown>).entry, "ENTRY");
+      addLine(plan.thesis_warning, "WARNING");
+      addLine(plan.hard_invalidation, "INVALIDATION");
+      plan.target_ladder.forEach((target, index) => addLine(target.price, `TP${index + 1}`));
+    }
+    Object.entries(fib?.levels ?? {}).forEach(([ratio, price]) => addLine(price, `Fib ${ratio}`));
+    if (range) {
+      addLine(range.range_low, "RANGE LOW");
+      addLine((Number(range.range_low) + Number(range.range_high)) / 2, "RANGE MID");
+      addLine(range.range_high, "RANGE HIGH");
+    }
+    structures.filter((structure) => structure.active).forEach((structure) => {
+      if (structure.structure_type === "HORIZONTAL_ZONE") {
+        addLine(structure.lower_price, `${structure.label ?? "ZONE"} LOW`);
+        addLine(structure.upper_price, `${structure.label ?? "ZONE"} HIGH`);
+      } else if (structure.anchor_one_time && structure.anchor_one_price && structure.anchor_two_time && structure.anchor_two_price) {
+        const trendline = view.current.addSeries(LineSeries, { color: "#f59e0b", title: structure.label ?? "TRENDLINE" });
+        trendline.setData([{ time: structure.anchor_one_time as never, value: Number(structure.anchor_one_price) }, { time: structure.anchor_two_time as never, value: Number(structure.anchor_two_price) }]);
+        series.push(trendline);
+      }
+    });
+    return () => { lines.forEach((line) => bars.current?.removePriceLine(line)); series.forEach((item) => view.current?.removeSeries(item)); };
+  }, [plan, structures, fib, range]);
+
+  return <div ref={root} />;
+}

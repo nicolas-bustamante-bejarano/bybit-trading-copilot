@@ -1,3 +1,18 @@
 import type { Coach } from "@/lib/api/types";
 import { Panel } from "../ui";
-export function FlowPanel({ coach }: { coach: Coach | null }) { const flow = coach?.market_context.order_flow ?? {}; return <Panel title="Flow" kicker="LIVE DATA WHEN AVAILABLE"><div className="grid grid-cols-2 gap-2 font-mono text-xs text-slate-400"><div>FUNDING<br/><b>{coach?.market_context.funding ?? "—"}</b></div><div>OPEN INTEREST<br/><b>{coach?.market_context.open_interest ?? "—"}</b></div><div>REACTION<br/><b>{coach?.market_context.reaction ?? "—"}</b></div><div>AGGRESSIVE FLOW<br/><b>{Object.keys(flow).length ? JSON.stringify(flow) : "—"}</b></div></div></Panel> }
+
+export function FlowPanel({ coach }: { coach: Coach | null }) {
+  const flow = coach?.market_context.order_flow ?? {};
+  const delta = flow.aggressive_delta ?? flow.delta ?? "—";
+  const imbalance = flow.imbalance ?? flow.book_imbalance ?? "—";
+
+  return <Panel title="Flow" kicker="LIVE DATA WHEN AVAILABLE">
+    <div className="grid grid-cols-2 gap-2 font-mono text-xs text-slate-400">
+      <div>FUNDING<br /><b>{coach?.market_context.funding ?? "—"}</b></div>
+      <div>OPEN INTEREST<br /><b>{coach?.market_context.open_interest ?? "—"}</b></div>
+      <div>REACTION<br /><b>{coach?.market_context.reaction ?? "—"}</b></div>
+      <div>FLOW DELTA<br /><b>{String(delta)}</b></div>
+      <div>BOOK IMBALANCE<br /><b>{String(imbalance)}</b></div>
+    </div>
+  </Panel>;
+}

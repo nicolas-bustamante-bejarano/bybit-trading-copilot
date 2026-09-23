@@ -27,6 +27,12 @@ from trading_copilot.services.indicators import fib_retracements
 router = APIRouter(prefix="/trade-plans", tags=["trade journal"])
 
 
+def fib_levels(row: FibDefinitionRow) -> dict[str, float]:
+    levels = fib_retracements(float(row.swing_low), float(row.swing_high), row.direction.lower())
+    levels["0.000"] = float(row.swing_high if row.direction.upper() == "LONG" else row.swing_low)
+    return dict(sorted(levels.items(), key=lambda item: float(item[0])))
+
+
 def dump(row):
     return {
         column.name: row.metadata_json if column.name == "metadata" else getattr(row, column.key)
@@ -213,7 +219,7 @@ async def list_fibs(plan_id: str, session: AsyncSession = Depends(get_session)):
     await require_plan(session, plan_id)
     rows = await session.scalars(select(FibDefinitionRow).where(FibDefinitionRow.trade_plan_id == plan_id))
     return [
-        dump(row) | {"levels": fib_retracements(float(row.swing_low), float(row.swing_high), row.direction.lower())}
+        dump(row) | {"levels": fib_levels(row)}
         for row in rows
     ]
 
@@ -230,7 +236,7 @@ async def put_fib(plan_id: str, body: FibDefinitionInput, session: AsyncSession 
             setattr(row, key, value)
     await session.commit()
     await session.refresh(row)
-    return dump(row) | {"levels": fib_retracements(float(row.swing_low), float(row.swing_high), row.direction.lower())}
+    return dump(row) | {"levels": fib_levels(row)}
 
 
 @router.get("/{plan_id}/range-definitions")
