@@ -48,16 +48,23 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 - [x] Canonical plan-aware portfolio structural-risk summary
 - [x] One-command local development with `make dev`
 
-## PR #19 — Live Trading Workspace
+## PR #19 — Live Trading Workspace + Sizing/Leverage Planner — MERGED
 
 - [x] Lightweight Charts workspace with public historical candles and 12/21 EMA overlays
 - [x] Timeframe and symbol selection, plus persisted manual horizontal zones
 - [x] Read-only, stop-based staged sizing with exchange quantity constraints and conservative friction
 - [x] Correlation-group capacity gates and novel-evidence requirements for adds
 - [x] Leverage shown only as a margin estimate; it never increases risk quantity
-- [ ] Streamed candle updates, richer markers, trendline editing, and flow panels remain future work
+- [ ] Streamed candle updates and richer markers remain future work
 
-## PR #20 — Setup Scanner
+## PR #20 — Workspace UX Completion (current)
+
+- [ ] Complete in-workspace trade-plan editor
+- [ ] Fib/range overlays and editing
+- [ ] Full form-based structure editing
+- [ ] State-change markers, evidence, sizing, and compact flow panels
+
+## PR #21 — Setup Scanner
 
 - Persistent watchlists and multi-symbol market evaluation
 - Trend Pullback candidates
@@ -68,7 +75,7 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 - States: `IGNORE`, `WATCH`, `APPROACHING_LOCATION`, `AT_LOCATION`, `REACTION_DEVELOPING`, `APPROACHING_BREAKOUT`, `BREAKOUT_ATTEMPT`, `ACCEPTANCE_PENDING`, `BREAKOUT_ACCEPTED`, `RETEST_PENDING`, `TRIGGER_ARMED`
 - No numeric setup score
 
-## PR #21 — Lower-Timeframe Trigger Engine
+## PR #22 — Lower-Timeframe Trigger Engine
 
 - Deviation/reclaim, failed breakout, breakout acceptance, and retest hold/failure
 - Failed auction, rejection/acceptance, structure rotation, flow confirmation, and continuation
@@ -76,14 +83,14 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 - Macro Breakout lifecycle from macro context through acceptance, retest, probe, and confirmed continuation
 - Manual trendlines, support/resistance zones, range boundaries, and macro targets first
 
-## PR #22 — Realtime Alerts
+## PR #23 — Realtime Transport + Alerts
 
 - Backend WebSocket or suitable realtime browser transport
 - Replace five-second polling for critical transition delivery
 - Deduplicate and cool down `APPROACHING LOCATION`, `APPROACHING BREAKOUT`, `TRIGGER ARMED`, `PROBE ALLOWED`, staged ADD permissions, risk breach, thesis warning, and invalidation alerts
 - Keep all exchange execution manual
 
-## PR #23 — Trader Development Analytics
+## PR #24 — Trader Development Analytics
 
 - Expectancy by playbook, regime, and location
 - MAE, MFE, and entry timing relative to trigger
