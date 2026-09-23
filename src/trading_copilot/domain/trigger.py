@@ -24,6 +24,19 @@ class TriggerState(StrEnum):
     INDETERMINATE = "INDETERMINATE"
 
 
+class TriggerArmSource(StrEnum):
+    ARM_TRANSITION = "ARM_TRANSITION"
+    FIRST_OBSERVATION_BASELINE = "FIRST_OBSERVATION_BASELINE"
+
+
+class TriggerReferenceSource(StrEnum):
+    RANGE_LOW = "RANGE_LOW"
+    RANGE_HIGH = "RANGE_HIGH"
+    FIB_ZONE_LOWER = "FIB_ZONE_LOWER"
+    FIB_ZONE_UPPER = "FIB_ZONE_UPPER"
+    ACCEPTED_BREAKOUT_LEVEL = "ACCEPTED_BREAKOUT_LEVEL"
+
+
 class LowerTimeframeBar(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
@@ -46,6 +59,31 @@ class LowerTimeframeBar(BaseModel):
         if not self.low <= self.close <= self.high:
             raise ValueError("bar close must be within low/high")
         return self
+
+
+class LowerTimeframeTriggerSnapshot(BaseModel):
+    symbol: str
+    evaluated_at: datetime
+    bars_5m: list[LowerTimeframeBar]
+    bars_15m: list[LowerTimeframeBar]
+    reaction_state: str | None = None
+    data_status: str
+    diagnostics: list[str] = Field(default_factory=list)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_snapshot_symbol(cls, value: str) -> str:
+        symbol = value.strip().upper()
+        if not symbol:
+            raise ValueError("symbol must not be empty")
+        return symbol
+
+    @field_validator("evaluated_at")
+    @classmethod
+    def require_aware_snapshot_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("evaluated_at must be timezone-aware")
+        return value
 
 
 class TriggerEvaluationRequest(BaseModel):
