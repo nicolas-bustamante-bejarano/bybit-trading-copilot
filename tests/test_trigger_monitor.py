@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import trading_copilot.main as main_module
 import trading_copilot.services.trigger_monitor as monitor_module
+import trading_copilot.services.trigger_runtime as runtime_module
 from trading_copilot.config import Settings
 from trading_copilot.domain.scanner import ScannerSetupType, ScannerStatus
 from trading_copilot.domain.trigger import (
@@ -31,6 +32,7 @@ from trading_copilot.services.trigger_context import resolve_trigger_context
 from trading_copilot.services.trigger_monitor import TriggerMonitor
 from trading_copilot.services.trigger_runtime import (
     TriggerCandidateOutcome,
+    _lock_prerequisites,
     evaluate_current_trigger_candidate,
     snapshot_covers_context,
 )
@@ -131,6 +133,30 @@ async def seed(session, *setups, list_row=None):
     session.add(list_row or watchlist(setups[0].symbol if setups else "BTCUSDT"))
     session.add_all(setups)
     await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_final_runtime_queries_lock_watchlist_then_watched_row():
+    setup = watched()
+    list_row = watchlist()
+
+    class RecordingSession:
+        def __init__(self):
+            self.statements = []
+            self.results = iter(["BTCUSDT", list_row, setup])
+
+        async def scalar(self, statement):
+            self.statements.append(statement)
+            return next(self.results)
+
+    session = RecordingSession()
+    locked_setup, locked_watchlist = await _lock_prerequisites(session, setup.id)
+
+    assert locked_setup is setup
+    assert locked_watchlist is list_row
+    assert session.statements[0]._for_update_arg is None
+    assert session.statements[1]._for_update_arg is not None
+    assert session.statements[2]._for_update_arg is not None
 
 
 @pytest.mark.asyncio
@@ -396,6 +422,68 @@ async def test_fresh_revalidation_skips_disarmed_candidate(sessions):
         attempt_count = await session.scalar(select(func.count(TriggerAttemptRow.id)))
 
     assert outcome.failure == "NOT_ELIGIBLE"
+    assert attempt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_persistence_failure_rolls_back_without_mutating_prerequisites(
+    sessions, monkeypatch
+):
+    setup = watched()
+    original_state = dict(setup.state)
+    async with sessions() as session:
+        await seed(session, setup)
+        context = resolve_trigger_context(watched=setup, watchlist=watchlist(), transitions=[])
+
+    async def failed_persistence(session, *, context, result):
+        session.add(
+            TriggerAttemptRow(
+                watched_setup_id=context.watched_setup_id,
+                symbol=context.symbol,
+                setup_type=context.setup_type.value,
+                arm_key=context.arm_key,
+                arm_source=context.arm_source.value,
+                arm_transition_id=context.arm_transition_id,
+                armed_at=context.armed_at,
+                reference_level=Decimal(str(context.reference_level)),
+                reference_source=context.reference_source.value,
+                reference_metadata=dict(context.reference_metadata),
+                retest_tolerance_bps=Decimal(str(context.retest_tolerance_bps)),
+                failure_tolerance_bps=Decimal(str(context.failure_tolerance_bps)),
+                state=result.state.value,
+                result=result.model_dump(mode="json"),
+                version=1,
+                first_evaluated_at=result.evaluated_at,
+                last_evaluated_at=result.evaluated_at,
+            )
+        )
+        await session.flush()
+        raise RuntimeError("injected persistence failure")
+
+    monkeypatch.setattr(runtime_module, "persist_trigger_result", failed_persistence)
+    with pytest.raises(RuntimeError, match="injected persistence failure"):
+        async with sessions() as session:
+            await evaluate_current_trigger_candidate(
+                session,
+                watched_setup_id=setup.id,
+                expected_arm_key=context.arm_key,
+                snapshot=snapshot(),
+            )
+
+    async with sessions() as session:
+        reloaded_setup = await session.get(WatchedSetupRow, setup.id)
+        reloaded_watchlist = await session.scalar(select(ScannerWatchlistRow))
+        attempt_count = await session.scalar(select(func.count(TriggerAttemptRow.id)))
+
+    assert reloaded_setup.status == ScannerStatus.TRIGGER_ARMED.value
+    assert reloaded_setup.state == original_state
+    assert reloaded_setup.version == 1
+    assert reloaded_watchlist.enabled is True
+    assert reloaded_watchlist.enabled_playbooks == [
+        "RANGE",
+        "TREND_PULLBACK",
+        "MACRO_BREAKOUT",
+    ]
     assert attempt_count == 0
 
 

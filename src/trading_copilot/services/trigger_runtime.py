@@ -31,6 +31,29 @@ class TriggerCandidateOutcome:
     failure: str | None = None
 
 
+async def _lock_prerequisites(
+    session: AsyncSession, watched_setup_id: str
+) -> tuple[WatchedSetupRow | None, ScannerWatchlistRow | None]:
+    symbol = await session.scalar(
+        select(WatchedSetupRow.symbol).where(WatchedSetupRow.id == watched_setup_id)
+    )
+    if symbol is None:
+        return None, None
+    watchlist = await session.scalar(
+        select(ScannerWatchlistRow)
+        .where(ScannerWatchlistRow.symbol == symbol)
+        .with_for_update()
+    )
+    watched = await session.scalar(
+        select(WatchedSetupRow)
+        .where(WatchedSetupRow.id == watched_setup_id)
+        .with_for_update()
+    )
+    if watched is None or watched.symbol != symbol:
+        return None, watchlist
+    return watched, watchlist
+
+
 def snapshot_covers_context(
     snapshot: LowerTimeframeTriggerSnapshot, context: TriggerContextResolution
 ) -> bool:
@@ -52,12 +75,9 @@ async def evaluate_current_trigger_candidate(
     expected_arm_key: str,
     snapshot: LowerTimeframeTriggerSnapshot,
 ) -> TriggerCandidateOutcome:
-    watched = await session.get(WatchedSetupRow, watched_setup_id)
+    watched, watchlist = await _lock_prerequisites(session, watched_setup_id)
     if watched is None:
         return TriggerCandidateOutcome(failure="CANDIDATE_UNAVAILABLE")
-    watchlist = await session.scalar(
-        select(ScannerWatchlistRow).where(ScannerWatchlistRow.symbol == watched.symbol)
-    )
     if watchlist is None:
         return TriggerCandidateOutcome(failure="WATCHLIST_CONFIG_REQUIRED")
     transitions = list(
@@ -75,10 +95,12 @@ async def evaluate_current_trigger_candidate(
     if current.arm_key != expected_arm_key:
         return TriggerCandidateOutcome(failure="ARM_CHANGED_DURING_CYCLE")
     attempt = await session.scalar(
-        select(TriggerAttemptRow).where(
+        select(TriggerAttemptRow)
+        .where(
             TriggerAttemptRow.watched_setup_id == watched.id,
             TriggerAttemptRow.arm_key == current.arm_key,
         )
+        .with_for_update()
     )
     context = resolve_trigger_context(
         watched=watched,
