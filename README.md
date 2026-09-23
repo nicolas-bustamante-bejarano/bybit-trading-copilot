@@ -21,6 +21,7 @@ A decision-support and execution-discipline system for discretionary crypto trad
 - Setup state machine instead of a numeric score
 - Manual execution plans and risk-gated adds
 - Portfolio risk budget with correlated-position awareness
+- Hindsight-safe entry replay with categorical execution grading, MAE/MFE, and thesis-flip detection
 
 ## Live market intelligence
 
@@ -119,6 +120,7 @@ POST /execution/project-add
 - `POST/GET /trade-plans/{id}/snapshots`
 - `POST/GET /trade-plans/{id}/execution-events`
 - `POST/GET /trade-plans/{id}/review`
+- `GET /trade-plans/{id}/replay-review?post_hours=12` — hindsight-safe entry diagnostics and MAE/MFE replay
 - `GET /positions/{symbol}/coach`
 - `GET /state-changes?symbol=BNBUSDT&limit=50`
 - `GET /state-change-monitor/status`
@@ -130,6 +132,12 @@ set `DATABASE_URL=postgresql+asyncpg://...` for Postgres or Supabase. Run migrat
 starting the service. Decision snapshots and execution events expose create/list operations only
 and preserve the recorded history. Trade reviews record factual outcomes and confidence without a
 numeric quality score.
+
+The entry-replay endpoint reconstructs the first recorded `ENTRY`/`PROBE` using public historical
+Bybit candles and the journal state that existed at execution time. Entry grading uses only bars
+fully closed before the fill. Post-entry candles are reserved for MAE/MFE and invalidation-touch
+replay, preventing future price action from rewriting the entry decision. It also flags an
+opposite-direction `EXIT`/`INVALIDATE` in the prior two hours as a same-session thesis flip.
 
 Exchange stop fields remain account-risk proxies. Journal snapshot metadata should identify stop
 provenance as `execution_plan`, `exchange_order`, `inferred`, or `unknown`; the persistence layer
@@ -188,6 +196,7 @@ execution capability.
 - [Playbooks](docs/PLAYBOOKS.md)
 - [Microstructure](docs/MICROSTRUCTURE.md)
 - [Execution coach](docs/EXECUTION.md)
+- [Entry replay review](docs/ENTRY_REPLAY.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## Production and local supervision

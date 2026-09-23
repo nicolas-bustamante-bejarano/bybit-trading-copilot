@@ -20,11 +20,26 @@ class BybitPublicClient:
         result = await self._get("/v5/market/tickers", {"category": "linear", "symbol": symbol})
         return result["list"][0]
 
-    async def klines(self, symbol: str, interval: str = "60", limit: int = 200) -> list[list[str]]:
-        result = await self._get(
-            "/v5/market/kline",
-            {"category": "linear", "symbol": symbol, "interval": interval, "limit": limit},
-        )
+    async def klines(
+        self,
+        symbol: str,
+        interval: str = "60",
+        limit: int = 200,
+        *,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
+    ) -> list[list[str]]:
+        params: dict[str, str | int] = {
+            "category": "linear",
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit,
+        }
+        if start_ms is not None:
+            params["start"] = start_ms
+        if end_ms is not None:
+            params["end"] = end_ms
+        result = await self._get("/v5/market/kline", params)
         return list(reversed(result["list"]))
 
     async def orderbook(self, symbol: str, limit: int = 50) -> dict:

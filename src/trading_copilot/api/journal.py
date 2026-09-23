@@ -1,3 +1,6 @@
+from datetime import UTC, datetime, timedelta
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -22,7 +25,9 @@ from trading_copilot.persistence.models import (
     TradeReviewRow,
 )
 from trading_copilot.persistence.repository import TradePlanRepository
+from trading_copilot.services.bybit_public import BybitPublicClient
 from trading_copilot.services.indicators import fib_retracements
+from trading_copilot.services.trade_replay import build_entry_replay_review, parse_klines
 
 router = APIRouter(prefix="/trade-plans", tags=["trade journal"])
 
@@ -38,6 +43,14 @@ def dump(row):
         column.name: row.metadata_json if column.name == "metadata" else getattr(row, column.key)
         for column in row.__table__.columns
     }
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _timestamp_ms(value: datetime) -> int:
+    return int(_as_utc(value).timestamp() * 1000)
 
 
 async def require_plan(session: AsyncSession, plan_id: str):
@@ -212,6 +225,123 @@ async def get_review(plan_id: str, session: AsyncSession = Depends(get_session))
     if row is None:
         raise HTTPException(404, "Trade review not found")
     return dump(row)
+
+
+@router.get("/{plan_id}/replay-review")
+async def get_replay_review(
+    plan_id: str,
+    post_hours: int = 12,
+    session: AsyncSession = Depends(get_session),
+):
+    if not 1 <= post_hours <= 24:
+        raise HTTPException(422, "post_hours must be between 1 and 24")
+
+    plan = await require_plan(session, plan_id)
+    entry_event = await session.scalar(
+        select(ExecutionEventRow)
+        .where(
+            ExecutionEventRow.trade_plan_id == plan_id,
+            ExecutionEventRow.event_type.in_(["ENTRY", "PROBE"]),
+            ExecutionEventRow.price.is_not(None),
+        )
+        .order_by(ExecutionEventRow.timestamp)
+        .limit(1)
+    )
+    if entry_event is None:
+        raise HTTPException(409, "Replay requires a recorded ENTRY or PROBE event with a price")
+
+    snapshot = None
+    if entry_event.decision_snapshot_id:
+        snapshot = await session.get(DecisionSnapshotRow, entry_event.decision_snapshot_id)
+    if snapshot is None:
+        snapshot = await session.scalar(
+            select(DecisionSnapshotRow)
+            .where(
+                DecisionSnapshotRow.trade_plan_id == plan_id,
+                DecisionSnapshotRow.timestamp <= entry_event.timestamp,
+            )
+            .order_by(DecisionSnapshotRow.timestamp.desc())
+            .limit(1)
+        )
+
+    entry_time = _as_utc(entry_event.timestamp)
+    prior_pair = (
+        await session.execute(
+            select(ExecutionEventRow, TradePlanRow)
+            .join(TradePlanRow, ExecutionEventRow.trade_plan_id == TradePlanRow.id)
+            .where(
+                ExecutionEventRow.trade_plan_id != plan_id,
+                ExecutionEventRow.timestamp < entry_event.timestamp,
+                ExecutionEventRow.timestamp >= entry_event.timestamp - timedelta(hours=2),
+                ExecutionEventRow.event_type.in_(["EXIT", "INVALIDATE"]),
+                TradePlanRow.side != plan.side,
+            )
+            .order_by(ExecutionEventRow.timestamp.desc())
+            .limit(1)
+        )
+    ).first()
+
+    prior_trade = None
+    if prior_pair is not None:
+        prior_event, prior_plan = prior_pair
+        prior_trade = {
+            "trade_plan_id": prior_plan.id,
+            "symbol": prior_plan.symbol,
+            "side": prior_plan.side,
+            "event_type": prior_event.event_type,
+            "timestamp_ms": _timestamp_ms(prior_event.timestamp),
+        }
+
+    entry_ms = _timestamp_ms(entry_time)
+    post_end_ms = entry_ms + post_hours * 60 * 60_000
+    client = BybitPublicClient()
+    try:
+        raw_15m = await client.klines(
+            plan.symbol,
+            "15",
+            200,
+            start_ms=entry_ms - 24 * 60 * 60_000,
+            end_ms=post_end_ms,
+        )
+        raw_1h = await client.klines(
+            plan.symbol,
+            "60",
+            200,
+            start_ms=entry_ms - 72 * 60 * 60_000,
+            end_ms=post_end_ms,
+        )
+    except (httpx.HTTPError, RuntimeError) as exc:
+        raise HTTPException(502, f"Historical Bybit replay data unavailable: {exc}") from exc
+
+    evidence_present = snapshot.evidence_present if snapshot is not None else []
+    evidence_missing = snapshot.evidence_missing if snapshot is not None else []
+    confirmation_conditions = snapshot.confirmation_conditions if snapshot is not None else []
+
+    review = build_entry_replay_review(
+        trade_plan_id=plan.id,
+        symbol=plan.symbol,
+        side=plan.side,
+        setup_type=plan.setup_type,
+        entry_timestamp_ms=entry_ms,
+        entry_price=entry_event.price,
+        quantity=entry_event.quantity,
+        invalidation=plan.hard_invalidation,
+        max_risk_percent=plan.max_risk_percent,
+        planned=entry_event.planned,
+        confirmation_satisfied=entry_event.confirmation_satisfied,
+        risk_policy_satisfied=entry_event.risk_policy_satisfied,
+        evidence_present=evidence_present,
+        evidence_missing=evidence_missing,
+        confirmation_conditions=confirmation_conditions,
+        candles_15m=parse_klines(raw_15m),
+        candles_1h=parse_klines(raw_1h),
+        post_end_timestamp_ms=post_end_ms,
+        thesis_flip=prior_trade is not None,
+        prior_trade=prior_trade,
+    )
+    review["entry"]["event_id"] = entry_event.id
+    review["entry"]["decision_snapshot_id"] = snapshot.id if snapshot is not None else None
+    return review
 
 
 @router.get("/{plan_id}/fib-definitions")
