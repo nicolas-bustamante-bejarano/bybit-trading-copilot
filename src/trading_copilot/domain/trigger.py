@@ -57,6 +57,7 @@ class TriggerEvaluationRequest(BaseModel):
     reference_level: float = Field(gt=0)
     bars_15m: list[LowerTimeframeBar] = Field(default_factory=list)
     bars_5m: list[LowerTimeframeBar] = Field(default_factory=list)
+    armed_at: datetime
     evaluated_at: datetime
     retest_tolerance_bps: float = Field(default=25, ge=0)
     failure_tolerance_bps: float = Field(default=25, ge=0)
@@ -70,15 +71,17 @@ class TriggerEvaluationRequest(BaseModel):
             raise ValueError("symbol must not be empty")
         return symbol
 
-    @field_validator("evaluated_at")
+    @field_validator("armed_at", "evaluated_at")
     @classmethod
-    def require_aware_evaluation_time(cls, value: datetime) -> datetime:
+    def require_aware_time(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("evaluated_at must be timezone-aware")
+            raise ValueError("trigger timestamps must be timezone-aware")
         return value
 
     @model_validator(mode="after")
     def validate_setup_side(self) -> TriggerEvaluationRequest:
+        if self.armed_at > self.evaluated_at:
+            raise ValueError("armed_at must not be later than evaluated_at")
         expected = Side.LONG if self.setup_type.value.endswith("_LONG") else Side.SHORT
         if self.side != expected:
             raise ValueError("side must match setup_type")
@@ -94,6 +97,7 @@ class TriggerResult(BaseModel):
     pattern: TriggerPattern
     state: TriggerState
     reference_level: float
+    armed_at: datetime
     evaluated_at: datetime
     trigger_confirmed: bool
     anchor_bar_end_ms: int | None = None

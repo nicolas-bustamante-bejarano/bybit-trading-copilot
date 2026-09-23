@@ -41,6 +41,7 @@ def request(
     side: Side = Side.LONG,
     bars_5m: list[LowerTimeframeBar] | None = None,
     bars_15m: list[LowerTimeframeBar] | None = None,
+    armed_ms: int = 0,
     evaluated_ms: int = 10_000,
     reaction_state: str | None = None,
     reference_level: float = 100,
@@ -54,6 +55,7 @@ def request(
         reference_level=reference_level,
         bars_5m=bars_5m or [],
         bars_15m=bars_15m or [],
+        armed_at=datetime.fromtimestamp(armed_ms / 1000, UTC),
         evaluated_at=datetime.fromtimestamp(evaluated_ms / 1000, UTC),
         retest_tolerance_bps=retest_tolerance_bps,
         failure_tolerance_bps=failure_tolerance_bps,
@@ -607,3 +609,226 @@ def test_engine_has_no_exchange_or_framework_dependency():
     assert "sqlalchemy" not in source.lower()
     assert "fastapi" not in source.lower()
     assert "place_order" not in source
+
+
+def test_armed_at_must_be_timezone_aware():
+    payload = request().model_dump()
+    payload["armed_at"] = datetime(2025, 1, 1)  # noqa: DTZ001 - intentionally naive
+
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        TriggerEvaluationRequest.model_validate(payload)
+
+
+def test_armed_at_cannot_be_after_evaluation():
+    with pytest.raises(ValidationError, match="armed_at must not be later"):
+        request(armed_ms=2_001, evaluated_ms=2_000)
+
+
+def test_bar_ending_exactly_at_arm_is_excluded():
+    result = evaluate_lower_timeframe_trigger(
+        request(bars_5m=[long_reclaim(1_000)], armed_ms=1_000)
+    )
+
+    assert result.state == TriggerState.INDETERMINATE
+
+
+def test_first_bar_ending_after_arm_is_included():
+    result = evaluate_lower_timeframe_trigger(
+        request(bars_5m=[long_reclaim(1_001)], armed_ms=1_000)
+    )
+
+    assert result.state == TriggerState.RECLAIMED
+    assert result.armed_at == datetime.fromtimestamp(1, UTC)
+
+
+def test_full_pre_arm_long_sequence_is_ignored():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            bars_5m=[long_reclaim(), long_rotation()],
+            bars_15m=[supportive_15m(Side.LONG)],
+            armed_ms=2_500,
+        )
+    )
+
+    assert result.state == TriggerState.INDETERMINATE
+    assert not result.trigger_confirmed
+
+
+def test_pre_arm_long_sequence_with_unrelated_post_arm_bar_waits():
+    unrelated = bar(3_000, open=101, high=102, low=100.5, close=101)
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            bars_5m=[long_reclaim(), long_rotation(), unrelated],
+            bars_15m=[supportive_15m(Side.LONG)],
+            armed_ms=2_500,
+        )
+    )
+
+    assert result.state == TriggerState.WAITING
+
+
+def test_pre_arm_reclaim_cannot_anchor_post_arm_continuation():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            bars_5m=[long_reclaim(), long_rotation(3_000)],
+            bars_15m=[supportive_15m(Side.LONG, 3_000)],
+            armed_ms=2_000,
+        )
+    )
+
+    assert result.state == TriggerState.WAITING
+    assert result.anchor_bar_end_ms is None
+
+
+def test_fully_post_arm_long_sequence_confirms():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            bars_5m=[long_reclaim(3_000), long_rotation(4_000)],
+            bars_15m=[supportive_15m(Side.LONG, 4_000)],
+            armed_ms=2_000,
+        )
+    )
+
+    assert result.state == TriggerState.CONFIRMED
+
+
+def test_pre_arm_short_reclaim_cannot_anchor_post_arm_continuation():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            setup_type=ScannerSetupType.RANGE_SHORT,
+            side=Side.SHORT,
+            bars_5m=[short_reclaim(), short_rotation(3_000)],
+            bars_15m=[supportive_15m(Side.SHORT, 3_000)],
+            armed_ms=2_000,
+        )
+    )
+
+    assert result.state == TriggerState.WAITING
+    assert not result.trigger_confirmed
+
+
+def test_fully_post_arm_short_sequence_confirms_at_evaluation_boundary():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            setup_type=ScannerSetupType.RANGE_SHORT,
+            side=Side.SHORT,
+            bars_5m=[short_reclaim(3_000), short_rotation(4_000)],
+            bars_15m=[supportive_15m(Side.SHORT, 4_000)],
+            armed_ms=2_000,
+            evaluated_ms=4_000,
+        )
+    )
+
+    assert result.state == TriggerState.CONFIRMED
+
+
+def test_pre_arm_15m_acceptance_is_ignored():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            bars_5m=[long_reclaim(3_000), long_rotation(4_000)],
+            bars_15m=[supportive_15m(Side.LONG, 2_000)],
+            armed_ms=2_500,
+        )
+    )
+
+    assert result.state == TriggerState.DEVELOPING
+    assert result.local_15m_acceptance is None
+
+
+def test_post_arm_15m_acceptance_is_used():
+    result = evaluate_lower_timeframe_trigger(
+        request(
+            bars_5m=[long_reclaim(3_000), long_rotation(4_000)],
+            bars_15m=[supportive_15m(Side.LONG, 4_000)],
+            armed_ms=2_500,
+        )
+    )
+
+    assert result.state == TriggerState.CONFIRMED
+    assert result.local_15m_acceptance is True
+
+
+def test_pre_arm_macro_hold_cannot_anchor_post_arm_continuation():
+    hold = bar(1_000, open=100, high=101, low=99.8, close=100.5)
+    continuation = bar(3_000, open=101, high=102.5, low=101, close=102)
+    result = evaluate_lower_timeframe_trigger(
+        macro_request(
+            Side.LONG,
+            [hold, continuation],
+            [supportive_15m(Side.LONG, 3_000)],
+            armed_ms=2_000,
+        )
+    )
+
+    assert result.state == TriggerState.WAITING
+    assert not result.trigger_confirmed
+
+
+def test_failed_macro_hold_is_not_resurrected_by_non_touch_close():
+    hold = bar(1_000, open=100, high=101, low=99.8, close=100.5)
+    failure = bar(2_000, open=100, high=100.1, low=99.4, close=99.7)
+    unrelated = bar(3_000, open=101, high=102, low=100.8, close=101.5)
+    result = evaluate_lower_timeframe_trigger(
+        macro_request(Side.LONG, [hold, failure, unrelated])
+    )
+
+    assert result.state == TriggerState.FAILED
+    assert result.anchor_bar_end_ms == 1_000
+    assert result.blocking_reasons == ["TRIGGER_ATTEMPT_FAILED"]
+
+
+def test_fresh_macro_retest_supersedes_failed_attempt():
+    hold = bar(1_000, open=100, high=101, low=99.8, close=100.5)
+    failure = bar(2_000, open=100, high=100.1, low=99.4, close=99.7)
+    fresh_hold = bar(3_000, open=100, high=101, low=99.8, close=100.5)
+    result = evaluate_lower_timeframe_trigger(
+        macro_request(Side.LONG, [hold, failure, fresh_hold])
+    )
+
+    assert result.state == TriggerState.RETEST_HELD
+    assert result.anchor_bar_end_ms == 3_000
+
+
+def test_fresh_macro_retest_and_continuation_confirm():
+    hold = bar(1_000, open=100, high=101, low=99.8, close=100.5)
+    failure = bar(2_000, open=100, high=100.1, low=99.4, close=99.7)
+    fresh_hold = bar(3_000, open=100, high=101, low=99.8, close=100.5)
+    continuation = bar(4_000, open=101, high=102.5, low=100.5, close=102)
+    result = evaluate_lower_timeframe_trigger(
+        macro_request(
+            Side.LONG,
+            [hold, failure, fresh_hold, continuation],
+            [supportive_15m(Side.LONG, 4_000)],
+        )
+    )
+
+    assert result.state == TriggerState.CONFIRMED
+    assert result.anchor_bar_end_ms == 3_000
+
+
+def test_short_failed_macro_attempt_requires_fresh_retest():
+    hold = bar(1_000, open=100, high=100.2, low=99, close=99.5)
+    failure = bar(2_000, open=100, high=100.6, low=99.8, close=100.3)
+    unrelated = bar(3_000, open=99, high=99.2, low=98, close=98.5)
+    result = evaluate_lower_timeframe_trigger(
+        macro_request(Side.SHORT, [hold, failure, unrelated])
+    )
+
+    assert result.state == TriggerState.FAILED
+
+
+def test_short_fresh_macro_retest_can_confirm_after_failure():
+    hold = bar(1_000, open=100, high=100.2, low=99, close=99.5)
+    failure = bar(2_000, open=100, high=100.6, low=99.8, close=100.3)
+    fresh_hold = bar(3_000, open=100, high=100.2, low=99, close=99.5)
+    continuation = bar(4_000, open=99, high=99.5, low=97.5, close=98)
+    result = evaluate_lower_timeframe_trigger(
+        macro_request(
+            Side.SHORT,
+            [hold, failure, fresh_hold, continuation],
+            [supportive_15m(Side.SHORT, 4_000)],
+        )
+    )
+
+    assert result.state == TriggerState.CONFIRMED
+    assert result.anchor_bar_end_ms == 3_000

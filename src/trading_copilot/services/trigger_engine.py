@@ -35,7 +35,7 @@ class _SequenceEvidence:
 
 
 def _completed_bars(
-    bars: Iterable[LowerTimeframeBar], evaluated_at_ms: int
+    bars: Iterable[LowerTimeframeBar], armed_at_ms: float, evaluated_at_ms: float
 ) -> list[LowerTimeframeBar]:
     """Sort completed bars and collapse exact duplicates deterministically.
 
@@ -44,7 +44,7 @@ def _completed_bars(
     """
     by_start: dict[int, LowerTimeframeBar] = {}
     for bar in bars:
-        if bar.end_ms > evaluated_at_ms:
+        if bar.end_ms <= armed_at_ms or bar.end_ms > evaluated_at_ms:
             continue
         existing = by_start.get(bar.start_ms)
         if existing is not None and existing != bar:
@@ -166,14 +166,18 @@ def _evaluate_retest_hold(
             if _failed(bar, failure_level, side):
                 failed_anchor = anchor
                 anchor = None
+                touched = False
                 continue
             if _continued(bar, anchor, side):
                 return _SequenceEvidence(TriggerState.DEVELOPING, anchor, bar)
-        if anchor is None:
-            touched = touched or touches
+        if anchor is None and touches:
+            touched = True
+            failed_anchor = None
         if anchor is None and touched:
             if _failed(bar, failure_level, side):
-                return _SequenceEvidence(TriggerState.FAILED, bar)
+                failed_anchor = bar
+                touched = False
+                continue
             if holds:
                 anchor = bar
                 failed_anchor = None
@@ -185,9 +189,10 @@ def _evaluate_retest_hold(
 
 
 def evaluate_lower_timeframe_trigger(request: TriggerEvaluationRequest) -> TriggerResult:
-    evaluated_at_ms = int(request.evaluated_at.timestamp() * 1000)
-    bars_5m = _completed_bars(request.bars_5m, evaluated_at_ms)
-    bars_15m = _completed_bars(request.bars_15m, evaluated_at_ms)
+    armed_at_ms = request.armed_at.timestamp() * 1000
+    evaluated_at_ms = request.evaluated_at.timestamp() * 1000
+    bars_5m = _completed_bars(request.bars_5m, armed_at_ms, evaluated_at_ms)
+    bars_15m = _completed_bars(request.bars_15m, armed_at_ms, evaluated_at_ms)
     pattern = _pattern(request.setup_type)
     reaction_supportive = _reaction_support(request.side, request.reaction_state)
     local_acceptance = _local_acceptance(
@@ -202,6 +207,7 @@ def evaluate_lower_timeframe_trigger(request: TriggerEvaluationRequest) -> Trigg
             pattern=pattern,
             state=TriggerState.INDETERMINATE,
             reference_level=request.reference_level,
+            armed_at=request.armed_at,
             evaluated_at=request.evaluated_at,
             trigger_confirmed=False,
             local_15m_acceptance=local_acceptance,
@@ -273,6 +279,7 @@ def evaluate_lower_timeframe_trigger(request: TriggerEvaluationRequest) -> Trigg
         pattern=pattern,
         state=state,
         reference_level=request.reference_level,
+        armed_at=request.armed_at,
         evaluated_at=request.evaluated_at,
         trigger_confirmed=confirmed,
         anchor_bar_end_ms=sequence.anchor.end_ms if sequence.anchor else None,
