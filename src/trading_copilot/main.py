@@ -7,6 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trading_copilot.api.journal import router as journal_router
+from trading_copilot.api.scanner import router as scanner_router
+from trading_copilot.api.scanner import set_status_provider as set_scanner_status_provider
 from trading_copilot.api.state_changes import router as state_changes_router
 from trading_copilot.api.state_changes import set_status_provider
 from trading_copilot.api.workspace import router as workspace_router
@@ -93,6 +95,7 @@ async def lifespan(_: FastAPI):
         build_snapshot=_build_scanner_snapshot,
         compose_symbol=evaluate_symbol,
     )
+    set_scanner_status_provider(setup_scanner_monitor.status)
     if settings.setup_scanner_enabled:
         setup_scanner_monitor_task = asyncio.create_task(setup_scanner_monitor.run())
     try:
@@ -119,6 +122,7 @@ app = FastAPI(title="Bybit Trading Copilot", version="0.8.0", lifespan=lifespan)
 app.include_router(journal_router)
 app.include_router(workspace_router)
 app.include_router(state_changes_router)
+app.include_router(scanner_router)
 
 
 @app.get("/health")

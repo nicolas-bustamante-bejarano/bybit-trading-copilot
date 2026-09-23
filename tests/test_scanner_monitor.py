@@ -317,6 +317,9 @@ async def test_lifespan_launches_and_cancels_exactly_one_enabled_scanner(monkeyp
             self.cancelled = False
             instances.append(self)
 
+        def status(self):
+            return None
+
         async def run(self):
             self.run_started.set()
             try:
@@ -344,6 +347,9 @@ async def test_lifespan_does_not_launch_disabled_scanner(monkeypatch):
     class FakeMonitor:
         def __init__(self, **kwargs):
             pass
+
+        def status(self):
+            return None
 
         async def run(self):
             nonlocal run_calls
