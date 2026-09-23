@@ -57,3 +57,42 @@ export interface Candle { time: number; open: number; high: number; low: number;
 export interface Chart { symbol: string; timeframe: string; candles: Candle[] }
 export interface ChartStructure { id: string; symbol: string; timeframe: string; structure_type: "HORIZONTAL_ZONE" | "TRENDLINE"; label: string | null; lower_price: string | null; upper_price: string | null; anchor_one_time: number | null; anchor_one_price: string | null; anchor_two_time: number | null; anchor_two_price: string | null; active: boolean }
 export interface Sizing { maximum_quantity: string; maximum_notional: string; permitted_risk_usdt: string; risk_per_unit_usdt: string; estimated_margin_usdt: string | null; minimum_leverage_for_margin_fit: string | null; group_risk_used_usdt: string; group_risk_remaining_usdt: string; risk_budget_usdt: string; stop_distance: string; margin_percent_equity: string | null; liquidation_status: string; stages: { state: string; allocation?: string; quantity?: string; notional?: string; stage_risk_usdt?: string; cumulative_quantity?: string; cumulative_risk_usdt?: string; remaining_unlockable_risk_usdt?: string; allowed: boolean; status: string; reasons: string[] }[] }
+
+export type ScannerSetupType = "TREND_PULLBACK_LONG" | "TREND_PULLBACK_SHORT" | "RANGE_LONG" | "RANGE_SHORT" | "MACRO_BREAKOUT_LONG" | "MACRO_BREAKOUT_SHORT";
+export type ScannerStatus = "IGNORE" | "WATCH" | "APPROACHING_LOCATION" | "AT_LOCATION" | "REACTION_DEVELOPING" | "TRIGGER_ARMED" | "APPROACHING_BREAKOUT" | "BREAKOUT_ATTEMPT" | "ACCEPTANCE_PENDING" | "BREAKOUT_ACCEPTED" | "RETEST_PENDING";
+export type ScannerDataStatus = "CONFIRMED" | "PARTIAL" | "INDETERMINATE";
+export interface ScannerMonitorStatus {
+  enabled: boolean; running: boolean; interval_seconds: number;
+  last_cycle_started_at: string | null; last_cycle_completed_at: string | null;
+  last_success_at: string | null; last_error: string | null; last_cycle_duration_ms: number | null;
+  watchlist_count: number; setup_count: number; evaluated_symbols: string[]; failed_symbols: string[];
+}
+export interface ScannerWatchlistItem {
+  id: string; symbol: string; enabled: boolean; enabled_playbooks: string[];
+  approach_tolerance_bps: number; retest_tolerance_bps: number; acceptance_bars: number;
+  created_at: string; updated_at: string;
+}
+export interface ScannerWatchlistInput {
+  symbol: string; enabled?: boolean; enabled_playbooks: string[];
+  approach_tolerance_bps: number; retest_tolerance_bps: number; acceptance_bars: number;
+}
+export type ScannerWatchlistPatch = Partial<Omit<ScannerWatchlistInput, "symbol">>;
+export interface ScannerSetupState extends Record<string, unknown> {
+  symbol?: string; setup_type?: string; side?: string; status?: string; price?: number | string;
+  evaluated_at?: string; context?: Record<string, unknown>; location?: Record<string, unknown>;
+  reaction?: Record<string, unknown>; structure?: Record<string, unknown>;
+  distance_bps?: number | string; qualifying_close_count?: number; required_acceptance_bars?: number;
+  blocking_reasons?: string[]; next_conditions?: string[]; data_status?: ScannerDataStatus;
+  accepted_at?: string; accepted_breakout_level?: number | string; accepted_close_count?: number;
+  acceptance_bars?: number; accepted_structure_id?: string; accepted_side?: string;
+}
+export interface ScannerSetup {
+  id: string; symbol: string; setup_type: ScannerSetupType; status: ScannerStatus;
+  state: ScannerSetupState; version: number; trade_plan_id: string | null;
+  last_evaluated_at: string | null; updated_at: string; created_at: string;
+}
+export interface ScannerTransition {
+  id: string; watched_setup_id: string; symbol: string; setup_type: ScannerSetupType;
+  from_status: ScannerStatus | null; to_status: ScannerStatus; timestamp: string;
+  state_before: ScannerSetupState; state_after: ScannerSetupState; version: number;
+}

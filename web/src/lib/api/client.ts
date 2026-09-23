@@ -1,4 +1,4 @@
-import type { Account, AccountStatus, Chart, ChartStructure, Coach, ExecutionEvent, Health, LiveStatus, Portfolio, Sizing, Snapshot, StateChange, StateChangeMonitorStatus, TradePlan, TradeReview } from "./types";
+import type { Account, AccountStatus, Chart, ChartStructure, Coach, ExecutionEvent, Health, LiveStatus, Portfolio, ScannerMonitorStatus, ScannerSetup, ScannerTransition, ScannerWatchlistInput, ScannerWatchlistItem, ScannerWatchlistPatch, Sizing, Snapshot, StateChange, StateChangeMonitorStatus, TradePlan, TradeReview } from "./types";
 
 const API_BASE = "/backend";
 
@@ -48,4 +48,12 @@ export const api = {
   getRanges: (id: string) => get<Record<string, unknown>[]>(`/trade-plans/${encodeURIComponent(id)}/range-definitions`),
   putRange: (id: string, body: Record<string, unknown>) => mutate<Record<string, unknown>>(`/trade-plans/${encodeURIComponent(id)}/range-definition`, "PUT", body),
   getSizing: (body: Record<string, unknown>) => mutate<Sizing>("/workspace/sizing", "POST", body),
+  getScannerStatus: () => get<ScannerMonitorStatus>("/scanner/status"),
+  getScannerWatchlist: () => get<ScannerWatchlistItem[]>("/scanner/watchlist"),
+  createScannerWatchlistItem: (body: ScannerWatchlistInput) => mutate<ScannerWatchlistItem>("/scanner/watchlist", "POST", body),
+  patchScannerWatchlistItem: (symbol: string, body: ScannerWatchlistPatch) => mutate<ScannerWatchlistItem>(`/scanner/watchlist/${encodeURIComponent(symbol)}`, "PATCH", body),
+  deleteScannerWatchlistItem: (symbol: string) => mutate<void>(`/scanner/watchlist/${encodeURIComponent(symbol)}`, "DELETE"),
+  getScannerSetups: (filters: { symbol?: string; setup_type?: string; status?: string; limit?: number } = {}) => get<ScannerSetup[]>(`/scanner/setups?${new URLSearchParams(Object.entries(filters).filter((entry): entry is [string, string | number] => entry[1] !== undefined).map(([key, value]) => [key, String(value)])).toString()}`),
+  getScannerSetup: (symbol: string, setupType: string) => get<ScannerSetup>(`/scanner/setups/${encodeURIComponent(symbol)}/${encodeURIComponent(setupType)}`),
+  getScannerTransitions: (filters: { symbol?: string; setup_type?: string; watched_setup_id?: string; limit?: number } = {}) => get<ScannerTransition[]>(`/scanner/transitions?${new URLSearchParams(Object.entries(filters).filter((entry): entry is [string, string | number] => entry[1] !== undefined).map(([key, value]) => [key, String(value)])).toString()}`),
 };
