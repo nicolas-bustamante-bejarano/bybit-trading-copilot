@@ -1,4 +1,4 @@
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./trading_copilot.db"
     state_change_monitor_enabled: bool = False
     state_change_monitor_interval_seconds: float = 5.0
+    setup_scanner_enabled: bool = False
+    setup_scanner_interval_seconds: float = Field(default=30.0, gt=0)
+    setup_scanner_concurrency: int = Field(default=4, ge=1)
 
     @model_validator(mode="after")
     def validate_database(self):
