@@ -27,6 +27,9 @@ from trading_copilot.persistence.models import (
 from trading_copilot.persistence.repository import TradePlanRepository
 from trading_copilot.services.bybit_public import BybitPublicClient
 from trading_copilot.services.indicators import fib_retracements
+from trading_copilot.services.scanner_invalidation import (
+    invalidate_plan_structure_dependents,
+)
 from trading_copilot.services.trade_replay import build_entry_replay_review, parse_klines
 
 router = APIRouter(prefix="/trade-plans", tags=["trade journal"])
@@ -362,6 +365,11 @@ async def put_fib(plan_id: str, body: FibDefinitionInput, session: AsyncSession 
         row = FibDefinitionRow(trade_plan_id=plan_id, symbol=plan.symbol, **body.model_dump())
         session.add(row)
     else:
+        changed = any(getattr(row, key) != value for key, value in body.model_dump().items())
+        if changed:
+            await invalidate_plan_structure_dependents(
+                session, trade_plan_id=plan_id, setup_family="TREND_PULLBACK"
+            )
         for key, value in body.model_dump().items():
             setattr(row, key, value)
     await session.commit()
@@ -377,6 +385,9 @@ async def delete_fib(plan_id: str, session: AsyncSession = Depends(get_session))
     )
     if row is None:
         raise HTTPException(404, "Fib definition not found")
+    await invalidate_plan_structure_dependents(
+        session, trade_plan_id=plan_id, setup_family="TREND_PULLBACK"
+    )
     await session.delete(row)
     await session.commit()
     return Response(status_code=204)
@@ -397,6 +408,11 @@ async def put_range(plan_id: str, body: RangeDefinitionInput, session: AsyncSess
         row = RangeDefinitionRow(trade_plan_id=plan_id, symbol=plan.symbol, **body.model_dump())
         session.add(row)
     else:
+        changed = any(getattr(row, key) != value for key, value in body.model_dump().items())
+        if changed:
+            await invalidate_plan_structure_dependents(
+                session, trade_plan_id=plan_id, setup_family="RANGE"
+            )
         for key, value in body.model_dump().items():
             setattr(row, key, value)
     await session.commit()
@@ -414,6 +430,9 @@ async def delete_range(
     )
     if row is None:
         raise HTTPException(404, "Range definition not found")
+    await invalidate_plan_structure_dependents(
+        session, trade_plan_id=plan_id, setup_family="RANGE"
+    )
     await session.delete(row)
     await session.commit()
     return Response(status_code=204)

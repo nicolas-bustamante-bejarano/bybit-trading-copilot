@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PREVIEW_ACCOUNT, PREVIEW_PORTFOLIO, privateSyncLabel } from "../src/lib/dashboard-preview.ts";
-import { buildStructureDraft } from "../src/lib/scanner-authoring.ts";
+import { addChartPick, buildStructureDraft, hydrateStructureDraft, undoChartPick } from "../src/lib/scanner-authoring.ts";
 import { candidateCounts, defaultScannerTimeframe, exactCurrentTrigger, extractScannerOverlays, filterScannerCandidates, hasStructuralBlocker } from "../src/lib/scanner-visuals.ts";
 
 function setup(id, setupType, status, structure = {}) {
@@ -35,13 +35,13 @@ test("macro overlays use exact persisted structure and tolerance evidence", () =
   const row = setup("macro", "MACRO_BREAKOUT_LONG", "BREAKOUT_ACCEPTED", { type: "HORIZONTAL_ZONE", lower_price: 98, upper_price: 100, breakout_level: 100, approach_zone: { lower: 99, upper: 101 }, retest_zone: { lower: 99.5, upper: 100.5 } });
   row.state.accepted_breakout_level = 100;
   const overlay = extractScannerOverlays(row, null);
-  assert.deepEqual(overlay.lines.map((item) => item.label), ["BREAKOUT", "ACCEPTED BREAKOUT", "STRUCTURE LOW", "STRUCTURE HIGH"]);
+  assert.deepEqual(overlay.lines.map((item) => item.label), ["ACCEPTED BREAKOUT · BREAKOUT · STRUCTURE HIGH", "STRUCTURE LOW"]);
   assert.deepEqual(overlay.zones.map((item) => item.label), ["APPROACH TOLERANCE", "RETEST TOLERANCE"]);
 });
 
 test("range and trend overlays are extracted without reconstructing levels", () => {
   const range = extractScannerOverlays(setup("range", "RANGE_SHORT", "WATCH", { type: "RANGE", range_low: 90, range_high: 110, actionable_level: 110, approach_zone: { lower: 109, upper: 111 } }), null);
-  assert.deepEqual(range.lines.map((item) => item.price), [90, 110, 110]);
+  assert.deepEqual(range.lines.map((item) => item.price), [90, 110]);
   const levels = Object.fromEntries(["0.236", "0.382", "0.500", "0.618", "0.786", "0.886", "1.000"].map((ratio, index) => [ratio, 100 + index]));
   const trend = extractScannerOverlays(setup("trend", "TREND_PULLBACK_LONG", "AT_LOCATION", { type: "FIB_RETRACEMENT", levels, actionable_zone: { lower: 102, upper: 103 }, approach_zone: { lower: 101, upper: 104 } }), null);
   assert.equal(trend.lines.length, 7);
@@ -59,7 +59,39 @@ test("trigger overlay is accepted only for the exact current armed setup", () =>
   assert.equal(extractScannerOverlays(row, current).lines.some((item) => item.label.startsWith("LTF")), false);
   current.watched_setup_id = "arm-b";
   assert.equal(exactCurrentTrigger(row, current), current);
-  assert.equal(extractScannerOverlays(row, current).lines.some((item) => item.label === "LTF CONFIRMED"), true);
+  assert.equal(extractScannerOverlays(row, current).lines.some((item) => item.label.includes("LTF CONFIRMED")), true);
+});
+
+test("near-identical semantic lines and same-bar lifecycle markers normalize deterministically", () => {
+  const row = setup("macro", "MACRO_BREAKOUT_LONG", "BREAKOUT_ACCEPTED", { type: "HORIZONTAL_ZONE", lower_price: 100, upper_price: 100.0000001, breakout_level: 100 });
+  row.state.accepted_breakout_level = 100.0000002;
+  row.state.accepted_at = "2026-01-01T00:00:00Z";
+  const transitions = [{ to_status: "BREAKOUT_ACCEPTED", timestamp: "2026-01-01T00:00:00Z" }, { to_status: "RETEST_PENDING", timestamp: "2026-01-01T00:00:00Z" }];
+  const overlay = extractScannerOverlays(row, null, transitions);
+  assert.equal(overlay.lines.length, 1);
+  assert.match(overlay.lines[0].label, /ACCEPTED BREAKOUT/);
+  assert.match(overlay.lines[0].label, /STRUCTURE/);
+  assert.equal(overlay.markers.length, 1);
+  assert.match(overlay.markers[0].text, /BREAKOUT ACCEPTED · RETEST PENDING/);
+});
+
+test("completed picks lock, Undo removes only the last point, and edit hydrates persisted geometry", () => {
+  const first = { time: 100, price: 90 }; const second = { time: 200, price: 110 }; const third = { time: 300, price: 120 };
+  const complete = addChartPick("MACRO_TRENDLINE", addChartPick("MACRO_TRENDLINE", [], first), second);
+  assert.equal(addChartPick("MACRO_TRENDLINE", complete, third), complete);
+  assert.deepEqual(undoChartPick(complete), [first]);
+  const macro = setup("macro", "MACRO_BREAKOUT_LONG", "WATCH");
+  const hydrated = hydrateStructureDraft(macro, { id: "line-1", structure_type: "TRENDLINE", anchor_one_time: 100000, anchor_one_price: 90, anchor_two_time: 200000, anchor_two_price: 110 }, null, null, 999);
+  const exactStored = [{ time: 100000, price: 90 }, { time: 200000, price: 110 }];
+  assert.deepEqual(hydrated, { kind: "MACRO_TRENDLINE", picks: exactStored, id: "line-1" });
+});
+
+test("reset response state removes stale canonical overlays", () => {
+  const reset = setup("macro", "MACRO_BREAKOUT_LONG", "WATCH");
+  reset.state.blocking_reasons = ["STRUCTURE_REQUIRED"];
+  const overlay = extractScannerOverlays(reset, null);
+  assert.equal(overlay.missing, true);
+  assert.deepEqual(overlay.lines, []);
 });
 
 test("disabled private sync has explicit preview data instead of an API failure", () => {

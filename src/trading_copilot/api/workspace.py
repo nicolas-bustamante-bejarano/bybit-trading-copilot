@@ -5,6 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from trading_copilot.domain.workspace import StructureCreate, StructurePatch
 from trading_copilot.persistence.database import get_session
 from trading_copilot.persistence.models import ChartStructureRow
+from trading_copilot.services.scanner_invalidation import (
+    invalidate_chart_structure_dependents,
+)
 
 router = APIRouter(prefix="/chart-structures", tags=["workspace"])
 
@@ -39,7 +42,21 @@ async def patch_structure(
     row = await session.get(ChartStructureRow, structure_id)
     if row is None:
         raise HTTPException(404, "Chart structure not found")
-    for key, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    material_fields = {
+        "timeframe",
+        "lower_price",
+        "upper_price",
+        "anchor_one_time",
+        "anchor_one_price",
+        "anchor_two_time",
+        "anchor_two_price",
+        "active",
+    }
+    changed_materially = any(
+        key in material_fields and getattr(row, key) != value for key, value in updates.items()
+    )
+    for key, value in updates.items():
         setattr(row, key, value)
     try:
         StructureCreate(
@@ -51,6 +68,8 @@ async def patch_structure(
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if changed_materially:
+        await invalidate_chart_structure_dependents(session, structure_id=row.id)
     await session.commit()
     await session.refresh(row)
     return dump(row)
@@ -61,5 +80,6 @@ async def delete_structure(structure_id: str, session: AsyncSession = Depends(ge
     row = await session.get(ChartStructureRow, structure_id)
     if row is None:
         raise HTTPException(404, "Chart structure not found")
+    await invalidate_chart_structure_dependents(session, structure_id=row.id)
     await session.delete(row)
     await session.commit()

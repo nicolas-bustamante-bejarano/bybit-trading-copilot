@@ -6,11 +6,12 @@ import type { IChartApi, IPriceLine, ISeriesApi, ISeriesMarkersPluginApi, MouseE
 import { api } from "@/lib/api/client";
 import { usePolling } from "@/lib/api/use-polling";
 import type { ChartStructure, FibDefinition, RangeDefinition, ScannerSetup, TriggerCurrent } from "@/lib/api/types";
-import { buildStructureDraft, draftInstruction, requiredPickCount, type ChartPick, type StructureDraftKind } from "@/lib/scanner-authoring";
+import { addChartPick, buildStructureDraft, draftInstruction, hydrateStructureDraft, isStructureDraftValid, requiredPickCount, undoChartPick, type ChartPick, type StructureDraftKind } from "@/lib/scanner-authoring";
 import { extractScannerOverlays, hasStructuralBlocker, type ScannerTimeframe } from "@/lib/scanner-visuals";
 import { EmptyState, Panel } from "./ui";
 
 const TIMEFRAMES: { value: ScannerTimeframe; label: string }[] = [{ value: "4h", label: "4H" }, { value: "1h", label: "1H" }, { value: "15m", label: "15m" }, { value: "5m", label: "5m" }];
+type MutationPhase = "MUTATING" | "REEVALUATING" | "REFRESHING" | null;
 
 export function ScannerEvidenceChart({ setup, trigger, timeframe, onTimeframeChange, onEvidenceRefresh }: { setup: ScannerSetup | null; trigger: TriggerCurrent | null; timeframe: ScannerTimeframe; onTimeframeChange: (timeframe: ScannerTimeframe) => void; onEvidenceRefresh: () => Promise<void> }) {
   const symbol = setup?.symbol ?? null; const setupId = setup?.id ?? null;
@@ -30,21 +31,29 @@ export function ScannerEvidenceChart({ setup, trigger, timeframe, onTimeframeCha
   const [draftSetupId, setDraftSetupId] = useState<string | null>(null);
   const [picks, setPicks] = useState<ChartPick[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const [phase, setPhase] = useState<MutationPhase>(null);
   const [message, setMessage] = useState<string | null>(null);
   const sourceId = typeof setup?.state.structure?.structure_id === "string" ? setup.state.structure.structure_id : null;
   const selectedMacroStructure = (structures.data ?? []).find((row) => row.id === sourceId) ?? null;
   const activeDraftKind = draftSetupId === setupId ? draftKind : null;
   const activePicks = draftSetupId === setupId ? picks : [];
   const activeMessage = draftSetupId === setupId ? message : null;
+  const pending = phase !== null;
 
   const start = (kind: StructureDraftKind, initial: ChartPick[] = [], id: string | null = null) => { setDraftSetupId(setupId); setDraftKind(kind); setPicks(initial); setEditingId(id); setMessage(null); };
   const cancel = () => { setDraftSetupId(null); setDraftKind(null); setPicks([]); setEditingId(null); setMessage(null); };
-  const pick = (point: ChartPick) => { if (!activeDraftKind) return; setPicks((current) => current.length >= requiredPickCount(activeDraftKind) ? [point] : [...current, point]); };
+  const pick = (point: ChartPick) => { if (!activeDraftKind || pending) return; setPicks((current) => addChartPick(activeDraftKind, current, point)); };
+  const undo = () => { if (!pending) setPicks(undoChartPick); };
   const refreshCanonical = async () => { await Promise.all([structures.refresh(), definitions.refresh(), onEvidenceRefresh()]); };
+  useEffect(() => {
+    if (!activeDraftKind) return;
+    const handler = (event: KeyboardEvent) => { if (event.key === "Escape" && !pending) cancel(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
   const save = async () => {
     if (!setup || !activeDraftKind || draftSetupId !== setup.id) return;
-    setPending(true); setMessage(null);
+    setPhase("MUTATING"); setMessage(null);
     try {
       const payload = buildStructureDraft(setup, activeDraftKind, activePicks, timeframe);
       if (payload.target === "CHART_STRUCTURE") {
@@ -56,18 +65,19 @@ export function ScannerEvidenceChart({ setup, trigger, timeframe, onTimeframeCha
         } else await api.createChartStructure(payload.body);
       } else if (payload.target === "RANGE") await api.putRange(payload.planId, payload.body);
       else await api.putFib(payload.planId, payload.body);
+      setPhase("REEVALUATING");
       let reevaluationError: string | null = null;
       try { await api.reevaluateScannerSymbol(setup.symbol); }
       catch (error) { reevaluationError = error instanceof Error ? error.message : "reevaluation unavailable"; }
-      await refreshCanonical();
+      setPhase("REFRESHING"); await refreshCanonical();
       setDraftKind(null); setPicks([]); setEditingId(null);
       setMessage(reevaluationError ? `Structure saved. Scanner reevaluation failed: ${reevaluationError}` : "Structure saved and canonical evidence refreshed.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Structure could not be saved"); }
-    finally { setPending(false); }
+    finally { setPhase(null); }
   };
   const remove = async () => {
-    if (!setup || !window.confirm("Delete this canonical structure? Scanner evidence will be re-evaluated.")) return;
-    setPending(true); setMessage(null);
+    if (!setup || !window.confirm("Deleting this structure will reset Scanner acceptance/retest/trigger state derived from it. Historical evidence will be retained.")) return;
+    setPhase("MUTATING"); setMessage(null);
     try {
       if (setup.setup_type.startsWith("MACRO_BREAKOUT")) {
         if (!selectedMacroStructure) throw new Error("No selected canonical macro structure to delete.");
@@ -79,14 +89,15 @@ export function ScannerEvidenceChart({ setup, trigger, timeframe, onTimeframeCha
         if (!setup.trade_plan_id || !definitions.data?.fib) throw new Error("No canonical Fib definition to delete.");
         await api.deleteFib(setup.trade_plan_id);
       }
+      setPhase("REEVALUATING");
       let reevaluationError: string | null = null;
       try { await api.reevaluateScannerSymbol(setup.symbol); }
       catch (error) { reevaluationError = error instanceof Error ? error.message : "reevaluation unavailable"; }
-      await refreshCanonical();
+      setPhase("REFRESHING"); await refreshCanonical();
       setDraftKind(null); setPicks([]); setEditingId(null);
       setMessage(reevaluationError ? `Structure deleted. Scanner reevaluation failed: ${reevaluationError}` : "Structure deleted and canonical evidence refreshed.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Structure could not be deleted"); }
-    finally { setPending(false); }
+    finally { setPhase(null); }
   };
 
   return <Panel title={setup ? `${setup.symbol} · setup evidence` : "Setup evidence chart"} kicker="CANONICAL PERSISTED EVIDENCE">
@@ -95,12 +106,12 @@ export function ScannerEvidenceChart({ setup, trigger, timeframe, onTimeframeCha
       <div className="font-mono text-[9px] text-slate-600">EVIDENCE ONLY · NOT EXECUTION PERMISSION</div>
     </div>
     {setup && <StructureAuthoring
-      setup={setup} draftKind={activeDraftKind} picks={activePicks} pending={pending}
+      setup={setup} draftKind={activeDraftKind} picks={activePicks} pending={pending} phase={phase} timeframe={timeframe}
       message={activeMessage} selectedMacroStructure={selectedMacroStructure}
       fib={definitions.data?.fib ?? null} range={definitions.data?.range ?? null}
-      onStart={start} onCancel={cancel} onSave={() => void save()} onDelete={() => void remove()}
+      onStart={start} onCancel={cancel} onUndo={undo} onSave={() => void save()} onDelete={() => void remove()}
     />}
-    {!setup ? <EmptyState title="No candidate selected" detail="Select a candidate to load its canonical structure evidence."/> : chart.error ? <div className="rounded border border-red-400/15 bg-red-400/5 p-3 text-xs text-red-200">Chart unavailable: {chart.error}</div> : <><ScannerChartCanvas chart={chart.data} overlays={overlays} showEma={setup.setup_type.startsWith("TREND_PULLBACK")} sideLong={setup.setup_type.endsWith("LONG")} draftKind={activeDraftKind} picks={activePicks} onPick={activeDraftKind ? pick : null}/>{overlays?.missing && <div className="mt-3 rounded border border-amber-400/15 bg-amber-400/5 p-3 text-xs text-amber-200">No actionable structure defined. No inferred level is drawn.</div>}</>}
+    {!setup ? <EmptyState title="No candidate selected" detail="Select a candidate to load its canonical structure evidence."/> : chart.error ? <div className="rounded border border-red-400/15 bg-red-400/5 p-3 text-xs text-red-200">Chart unavailable: {chart.error}</div> : <><ScannerChartCanvas chart={chart.data} overlays={overlays} showEma={setup.setup_type.startsWith("TREND_PULLBACK")} sideLong={setup.setup_type.endsWith("LONG")} draftKind={activeDraftKind} picks={activePicks} onPick={activeDraftKind && !pending ? pick : null}/>{overlays && <OverlayLegend overlays={overlays}/>} {overlays?.missing && <div className="mt-3 rounded border border-amber-400/15 bg-amber-400/5 p-3 text-xs text-amber-200">No actionable structure defined. No inferred level is drawn.</div>}</>}
   </Panel>;
 }
 
@@ -149,8 +160,8 @@ function ScannerChartCanvas({ chart, overlays, showEma, sideLong, draftKind, pic
     const series: ISeriesApi<"Line">[] = [];
     overlays?.lines.forEach((item) => priceLines.push(barSeries.createPriceLine({ price: item.price, title: item.label, color: item.color, lineWidth: 1, lineStyle: 2 })));
     overlays?.zones.forEach((item) => {
-      priceLines.push(barSeries.createPriceLine({ price: item.lower, title: `${item.label} LOW`, color: item.color.replace(".12", ".65"), lineWidth: 1, lineStyle: 3 }));
-      priceLines.push(barSeries.createPriceLine({ price: item.upper, title: `${item.label} HIGH`, color: item.color.replace(".12", ".65"), lineWidth: 1, lineStyle: 3 }));
+      priceLines.push(barSeries.createPriceLine({ price: item.lower, title: "", axisLabelVisible: false, color: item.color.replace(".12", ".65"), lineWidth: 1, lineStyle: 3 }));
+      priceLines.push(barSeries.createPriceLine({ price: item.upper, title: "", axisLabelVisible: false, color: item.color.replace(".12", ".65"), lineWidth: 1, lineStyle: 3 }));
     });
     if (overlays?.trendline) {
       const trendline = chartView.addSeries(LineSeries, { color: overlays.trendline.color, lineWidth: 2, title: overlays.trendline.label });
@@ -185,25 +196,31 @@ function ScannerChartCanvas({ chart, overlays, showEma, sideLong, draftKind, pic
     return () => { priceLines.forEach((item) => barSeries.removePriceLine(item)); series.forEach((item) => chartView.removeSeries(item)); markerPlugin.current?.setMarkers([]); };
   }, [chart, overlays, showEma, sideLong, draftKind, picks]);
 
-  return <div ref={root} className="min-h-[520px]"/>;
+  return <div ref={root} className={`min-h-[520px] ${onPick ? "cursor-crosshair" : ""}`}/>;
 }
 
-function StructureAuthoring({ setup, draftKind, picks, pending, message, selectedMacroStructure, fib, range, onStart, onCancel, onSave, onDelete }: { setup: ScannerSetup; draftKind: StructureDraftKind | null; picks: ChartPick[]; pending: boolean; message: string | null; selectedMacroStructure: ChartStructure | null; fib: FibDefinition | null; range: RangeDefinition | null; onStart: (kind: StructureDraftKind, picks?: ChartPick[], id?: string | null) => void; onCancel: () => void; onSave: () => void; onDelete: () => void }) {
+function OverlayLegend({ overlays }: { overlays: NonNullable<ReturnType<typeof extractScannerOverlays>> }) {
+  if (overlays.missing) return null;
+  return <div className="mt-3 grid gap-2 rounded border border-white/7 bg-white/[.015] p-3 text-[10px] text-slate-400 sm:grid-cols-2 xl:grid-cols-3">
+    {overlays.lines.map((item) => <div key={`${item.label}/${item.price}`}><span className="mr-2 inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: item.color }}/><span>{item.label}</span><span className="ml-2 font-mono text-slate-200">{item.price}</span></div>)}
+    {overlays.zones.map((item) => <div key={`${item.label}/${item.lower}/${item.upper}`}><span className="text-slate-300">{item.label}</span><span className="ml-2 font-mono">{item.lower}–{item.upper}</span></div>)}
+    {overlays.trendline && <div><span className="text-slate-300">{overlays.trendline.label}</span><span className="ml-2">2 anchors</span></div>}
+    {overlays.markers.length > 0 && <div><span className="text-slate-300">Lifecycle</span><span className="ml-2">{overlays.markers.map((item) => item.text).join(" · ")}</span></div>}
+  </div>;
+}
+
+function StructureAuthoring({ setup, draftKind, picks, pending, phase, timeframe, message, selectedMacroStructure, fib, range, onStart, onCancel, onUndo, onSave, onDelete }: { setup: ScannerSetup; draftKind: StructureDraftKind | null; picks: ChartPick[]; pending: boolean; phase: MutationPhase; timeframe: ScannerTimeframe; message: string | null; selectedMacroStructure: ChartStructure | null; fib: FibDefinition | null; range: RangeDefinition | null; onStart: (kind: StructureDraftKind, picks?: ChartPick[], id?: string | null) => void; onCancel: () => void; onUndo: () => void; onSave: () => void; onDelete: () => void }) {
   const macro = setup.setup_type.startsWith("MACRO_BREAKOUT"); const rangeSetup = setup.setup_type.startsWith("RANGE");
   const existing = macro ? selectedMacroStructure : rangeSetup ? range : fib;
   const edit = () => {
-    const now = Math.floor(Date.now() / 1000);
-    const seconds = (value: number) => value > 10_000_000_000 ? Math.floor(value / 1000) : value;
-    if (macro && selectedMacroStructure) {
-      if (selectedMacroStructure.structure_type === "TRENDLINE" && selectedMacroStructure.anchor_one_time && selectedMacroStructure.anchor_one_price && selectedMacroStructure.anchor_two_time && selectedMacroStructure.anchor_two_price) onStart("MACRO_TRENDLINE", [{ time: seconds(selectedMacroStructure.anchor_one_time), price: Number(selectedMacroStructure.anchor_one_price) }, { time: seconds(selectedMacroStructure.anchor_two_time), price: Number(selectedMacroStructure.anchor_two_price) }], selectedMacroStructure.id);
-      else if (selectedMacroStructure.lower_price) onStart(setup.setup_type.endsWith("LONG") ? "MACRO_RESISTANCE" : "MACRO_SUPPORT", [{ time: now, price: Number(selectedMacroStructure.lower_price) }], selectedMacroStructure.id);
-    } else if (rangeSetup && range) onStart("RANGE", [{ time: now, price: Number(range.range_low) }, { time: now + 1, price: Number(range.range_high) }]);
-    else if (fib) onStart("FIB", [{ time: now, price: Number(fib.swing_low) }, { time: now + 1, price: Number(fib.swing_high) }]);
+    const hydrated = hydrateStructureDraft(setup, selectedMacroStructure, range, fib);
+    if (hydrated) onStart(hydrated.kind, hydrated.picks, hydrated.id);
   };
   return <div className="mb-3 rounded border border-cyan-400/15 bg-cyan-400/[.025] p-3">
     <div className="flex flex-wrap items-center justify-between gap-2"><div><div className="mono-label">STRUCTURE AUTHORING</div><div className="mt-1 text-xs text-slate-500">{hasStructuralBlocker(setup) ? "Canonical structure is required before this setup is active." : "Edit the canonical structure used by Scanner and Workspace."}</div></div><div className="flex gap-2">{existing && !draftKind && <><button onClick={edit} className="rounded border border-white/10 px-3 py-1.5 text-xs text-slate-300">Edit</button><button onClick={onDelete} disabled={pending} className="rounded border border-red-400/20 px-3 py-1.5 text-xs text-red-300">Delete</button></>}{!draftKind && <button disabled={!macro && !setup.trade_plan_id} onClick={() => onStart(macro ? (setup.setup_type.endsWith("LONG") ? "MACRO_RESISTANCE" : "MACRO_SUPPORT") : rangeSetup ? "RANGE" : "FIB")} className="rounded bg-cyan-400/15 px-3 py-1.5 text-xs text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">Define Structure</button>}</div></div>
     {!draftKind && !setup.trade_plan_id && !macro && <div className="mt-2 text-xs text-amber-300">A compatible active trade plan is required before Range or Fib structure can be persisted.</div>}
-    {draftKind && <div className="mt-3 border-t border-white/7 pt-3"><div className="mb-2 flex flex-wrap gap-2">{macro && <><button onClick={() => onStart("MACRO_RESISTANCE")} className="text-xs text-slate-300">Resistance</button><button onClick={() => onStart("MACRO_SUPPORT")} className="text-xs text-slate-300">Support</button><button onClick={() => onStart("MACRO_TRENDLINE")} className="text-xs text-slate-300">Trendline</button></>}</div><div className="text-xs text-cyan-100/75">{draftInstruction(draftKind, picks)}</div><div className="mt-2 flex gap-2"><button onClick={onSave} disabled={pending || picks.length !== requiredPickCount(draftKind)} className="rounded bg-cyan-400/15 px-3 py-1.5 text-xs text-cyan-200 disabled:opacity-40">{pending ? "Saving…" : "Save"}</button><button onClick={onCancel} disabled={pending} className="px-3 py-1.5 text-xs text-slate-500">Cancel</button></div></div>}
+    {draftKind && <div className="mt-3 border-t border-white/7 pt-3"><div className="mb-2 flex flex-wrap items-center gap-2"><span className="rounded bg-cyan-400/10 px-2 py-1 font-mono text-[9px] text-cyan-200">SELECTING · {picks.length}/{requiredPickCount(draftKind)}</span>{macro && <><button disabled={pending} onClick={() => onStart("MACRO_RESISTANCE")} className="text-xs text-slate-300 disabled:opacity-40">Resistance</button><button disabled={pending} onClick={() => onStart("MACRO_SUPPORT")} className="text-xs text-slate-300 disabled:opacity-40">Support</button><button disabled={pending} onClick={() => onStart("MACRO_TRENDLINE")} className="text-xs text-slate-300 disabled:opacity-40">Trendline</button></>}</div><div className="text-xs text-cyan-100/75">{draftInstruction(draftKind, picks)}</div><div className="mt-2 flex gap-2"><button onClick={onSave} disabled={pending || !isStructureDraftValid(setup, draftKind, picks, timeframe)} className="rounded bg-cyan-400/15 px-3 py-1.5 text-xs text-cyan-200 disabled:opacity-40">Save</button><button onClick={onUndo} disabled={pending || picks.length === 0} className="px-3 py-1.5 text-xs text-slate-300 disabled:opacity-40">Undo</button><button onClick={onCancel} disabled={pending} className="px-3 py-1.5 text-xs text-slate-500">Cancel <span className="font-mono text-[9px]">ESC</span></button></div></div>}
+    {phase && <div className="mt-2 font-mono text-[10px] text-cyan-200">{phase === "MUTATING" ? "SAVING CANONICAL STRUCTURE · RESETTING DEPENDENT SETUP" : phase === "REEVALUATING" ? "REEVALUATING SCANNER" : "REFRESHING CANONICAL EVIDENCE"}</div>}
     {message && <div className="mt-2 text-xs text-red-300">{message}</div>}
   </div>;
 }

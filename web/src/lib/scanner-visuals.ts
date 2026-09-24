@@ -7,6 +7,53 @@ export type OverlayTrendline = { label: string; color: string; points: { time: n
 export type OverlayMarker = { time: number; position: "aboveBar" | "belowBar"; color: string; shape: "arrowUp" | "arrowDown" | "circle"; text: string };
 export type ScannerOverlays = { lines: OverlayLine[]; zones: OverlayZone[]; trendline: OverlayTrendline | null; markers: OverlayMarker[]; missing: boolean };
 
+const PRICE_DEDUPE_BPS = 0.1;
+const linePriority = (label: string): number => {
+  if (label.startsWith("LTF")) return 5;
+  if (label === "ACCEPTED BREAKOUT") return 4;
+  if (label === "BREAKOUT" || label === "ACTIONABLE") return 3;
+  if (label.includes("STRUCTURE") || label.startsWith("RANGE")) return 2;
+  return 1;
+};
+const nearPrice = (left: number, right: number): boolean => Math.abs(left - right) / Math.max(Math.abs(left), Math.abs(right), 1e-12) * 10_000 <= PRICE_DEDUPE_BPS;
+
+export function normalizeOverlayLines(lines: OverlayLine[]): OverlayLine[] {
+  const normalized: OverlayLine[] = [];
+  for (const item of lines) {
+    const existing = normalized.find((candidate) => nearPrice(candidate.price, item.price));
+    if (!existing) { normalized.push({ ...item }); continue; }
+    const labels = [...new Set([...existing.label.split(" · "), ...item.label.split(" · ")])];
+    const preferred = linePriority(item.label) > linePriority(existing.label) ? item : existing;
+    existing.price = preferred.price;
+    existing.color = preferred.color;
+    existing.label = labels.sort((left, right) => linePriority(right) - linePriority(left)).join(" · ");
+  }
+  return normalized;
+}
+
+export function normalizeOverlayZones(zones: OverlayZone[]): OverlayZone[] {
+  const normalized: OverlayZone[] = [];
+  for (const item of zones) {
+    const existing = normalized.find((candidate) => nearPrice(candidate.lower, item.lower) && nearPrice(candidate.upper, item.upper));
+    if (!existing) { normalized.push({ ...item }); continue; }
+    existing.label = [...new Set([...existing.label.split(" · "), ...item.label.split(" · ")])].join(" · ");
+  }
+  return normalized;
+}
+
+export function clusterOverlayMarkers(markers: OverlayMarker[]): OverlayMarker[] {
+  const grouped = new Map<string, OverlayMarker>();
+  for (const marker of markers) {
+    const key = `${marker.time}/${marker.position}`;
+    const existing = grouped.get(key);
+    if (!existing) { grouped.set(key, { ...marker }); continue; }
+    existing.text = [...new Set([...existing.text.split(" · "), ...marker.text.split(" · ")])].join(" · ");
+    if (marker.shape !== "circle") existing.shape = marker.shape;
+    if (marker.color === "#fb7185" || marker.color === "#34d399") existing.color = marker.color;
+  }
+  return [...grouped.values()].sort((left, right) => left.time - right.time);
+}
+
 const numberValue = (value: unknown): number | null => {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : null;
@@ -94,5 +141,13 @@ export function extractScannerOverlays(setup: ScannerSetup, current: TriggerCurr
     const confirmationTime = timestamp(result.confirmation_bar_end_ms); if (confirmationTime !== null) markers.push({ time: confirmationTime, position: setup.setup_type.endsWith("LONG") ? "belowBar" : "aboveBar", color: result.state === "FAILED" ? "#fb7185" : "#34d399", shape: setup.setup_type.endsWith("LONG") ? "arrowUp" : "arrowDown", text: result.state === "FAILED" ? "TRIGGER FAILED" : "LTF CONFIRMATION" });
     const failureTime = timestamp(result.evaluated_at); if (result.state === "FAILED" && confirmationTime === null && failureTime !== null) markers.push({ time: failureTime, position: setup.setup_type.endsWith("LONG") ? "belowBar" : "aboveBar", color: "#fb7185", shape: "circle", text: "TRIGGER FAILED" });
   }
-  return { lines, zones, trendline, markers, missing: lines.length === 0 && zones.length === 0 && trendline === null };
+  const normalizedLines = normalizeOverlayLines(lines);
+  const normalizedZones = normalizeOverlayZones(zones);
+  return {
+    lines: normalizedLines,
+    zones: normalizedZones,
+    trendline,
+    markers: clusterOverlayMarkers(markers),
+    missing: normalizedLines.length === 0 && normalizedZones.length === 0 && trendline === null,
+  };
 }

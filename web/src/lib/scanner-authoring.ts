@@ -1,4 +1,4 @@
-import type { ScannerSetup } from "./api/types";
+import type { ChartStructure, FibDefinition, RangeDefinition, ScannerSetup } from "./api/types";
 import type { ScannerTimeframe } from "./scanner-visuals";
 
 export type StructureDraftKind = "MACRO_RESISTANCE" | "MACRO_SUPPORT" | "MACRO_TRENDLINE" | "RANGE" | "FIB";
@@ -12,6 +12,33 @@ const validPick = (pick: ChartPick | undefined): pick is ChartPick => Boolean(pi
 
 export function requiredPickCount(kind: StructureDraftKind): number {
   return kind === "MACRO_RESISTANCE" || kind === "MACRO_SUPPORT" ? 1 : 2;
+}
+
+export function addChartPick(kind: StructureDraftKind, picks: ChartPick[], point: ChartPick): ChartPick[] {
+  return picks.length >= requiredPickCount(kind) ? picks : [...picks, point];
+}
+
+export function undoChartPick(picks: ChartPick[]): ChartPick[] {
+  return picks.slice(0, -1);
+}
+
+export function hydrateStructureDraft(
+  setup: ScannerSetup,
+  structure: ChartStructure | null,
+  range: RangeDefinition | null,
+  fib: FibDefinition | null,
+  fallbackTime = Math.floor(Date.now() / 1000),
+): { kind: StructureDraftKind; picks: ChartPick[]; id: string | null } | null {
+  const seconds = (value: number) => value > 10_000_000_000 ? Math.floor(value / 1000) : value;
+  if (setup.setup_type.startsWith("MACRO_BREAKOUT") && structure) {
+    if (structure.structure_type === "TRENDLINE" && structure.anchor_one_time && structure.anchor_one_price && structure.anchor_two_time && structure.anchor_two_price) {
+      return { kind: "MACRO_TRENDLINE", picks: [{ time: seconds(structure.anchor_one_time), price: Number(structure.anchor_one_price) }, { time: seconds(structure.anchor_two_time), price: Number(structure.anchor_two_price) }], id: structure.id };
+    }
+    if (structure.lower_price) return { kind: setup.setup_type.endsWith("LONG") ? "MACRO_RESISTANCE" : "MACRO_SUPPORT", picks: [{ time: fallbackTime, price: Number(structure.lower_price) }], id: structure.id };
+  }
+  if (setup.setup_type.startsWith("RANGE") && range) return { kind: "RANGE", picks: [{ time: fallbackTime, price: Number(range.range_low) }, { time: fallbackTime + 1, price: Number(range.range_high) }], id: null };
+  if (setup.setup_type.startsWith("TREND_PULLBACK") && fib) return { kind: "FIB", picks: [{ time: fallbackTime, price: Number(fib.swing_low) }, { time: fallbackTime + 1, price: Number(fib.swing_high) }], id: null };
+  return null;
 }
 
 export function buildStructureDraft(setup: ScannerSetup, kind: StructureDraftKind, picks: ChartPick[], timeframe: ScannerTimeframe): StructureDraftPayload {
@@ -40,8 +67,13 @@ export function buildStructureDraft(setup: ScannerSetup, kind: StructureDraftKin
 }
 
 export function draftInstruction(kind: StructureDraftKind, picks: ChartPick[]): string {
-  if (kind === "MACRO_RESISTANCE" || kind === "MACRO_SUPPORT") return picks.length ? "Level selected. Review the preview, then Save." : "Click the chart once to select the exact level.";
-  if (kind === "MACRO_TRENDLINE") return picks.length === 0 ? "Click trendline anchor 1." : picks.length === 1 ? "Click trendline anchor 2." : "Review the two-point preview, then Save.";
-  if (kind === "RANGE") return picks.length === 0 ? "Click range low." : picks.length === 1 ? "Click range high." : "Review the range boundaries, then Save.";
-  return picks.length === 0 ? "Click swing low." : picks.length === 1 ? "Click swing high." : "Review the Fib anchors, then Save.";
+  if (kind === "MACRO_RESISTANCE" || kind === "MACRO_SUPPORT") return picks.length ? "Level selected. Review the preview, then Save." : `Select ${kind === "MACRO_RESISTANCE" ? "resistance" : "support"} with one chart click.`;
+  if (kind === "MACRO_TRENDLINE") return picks.length === 0 ? "Select anchor 1 on the chart." : picks.length === 1 ? "Select anchor 2 on the chart." : "Both anchors selected. Use Undo to revise or Save.";
+  if (kind === "RANGE") return picks.length === 0 ? "Select range low on the chart." : picks.length === 1 ? "Select range high on the chart." : "Both range bounds selected. Use Undo to revise or Save.";
+  return picks.length === 0 ? "Select swing low on the chart." : picks.length === 1 ? "Select swing high on the chart." : "Both Fib anchors selected. Use Undo to revise or Save.";
+}
+
+export function isStructureDraftValid(setup: ScannerSetup, kind: StructureDraftKind, picks: ChartPick[], timeframe: ScannerTimeframe): boolean {
+  try { buildStructureDraft(setup, kind, picks, timeframe); return true; }
+  catch { return false; }
 }
