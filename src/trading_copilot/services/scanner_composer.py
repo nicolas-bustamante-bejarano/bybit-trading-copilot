@@ -204,6 +204,7 @@ def _evaluate_macro(
         structure_metadata={
             "label": resolution.structure_label,
             "type": resolution.structure_type,
+            **resolution.structure_metadata,
         },
         evaluated_at=snapshot.evaluated_at,
     )
@@ -240,6 +241,9 @@ def _evaluate_macro(
         distance_bps=macro.distance_bps,
         qualifying_close_count=macro.qualifying_close_count,
         required_acceptance_bars=macro.required_acceptance_bars,
+        approach_tolerance_bps=float(watchlist_item.approach_tolerance_bps),
+        retest_tolerance_bps=float(watchlist_item.retest_tolerance_bps),
+        source_metadata=resolution.structure_metadata,
     )
     return result, state
 
@@ -255,7 +259,25 @@ def _macro_state_payload(
     distance_bps: float | None,
     qualifying_close_count: int,
     required_acceptance_bars: int,
+    approach_tolerance_bps: float | None = None,
+    retest_tolerance_bps: float | None = None,
+    source_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    structure = {
+        "structure_id": structure_id,
+        "label": structure_label,
+        "type": structure_type,
+        "breakout_level": breakout_level,
+        **(source_metadata or {}),
+    }
+    if breakout_level is not None and approach_tolerance_bps is not None:
+        structure["approach_zone"] = _level_tolerance_zone(
+            breakout_level, approach_tolerance_bps
+        )
+    if breakout_level is not None and retest_tolerance_bps is not None:
+        structure["retest_zone"] = _level_tolerance_zone(
+            breakout_level, retest_tolerance_bps
+        )
     return {
         **lifecycle_state,
         "symbol": result.symbol,
@@ -264,12 +286,7 @@ def _macro_state_payload(
         "status": result.status.value,
         "price": result.price,
         "evaluated_at": result.evaluated_at.isoformat(),
-        "structure": {
-            "structure_id": structure_id,
-            "label": structure_label,
-            "type": structure_type,
-            "breakout_level": breakout_level,
-        },
+        "structure": structure,
         "distance_bps": distance_bps,
         "qualifying_close_count": qualifying_close_count,
         "required_acceptance_bars": required_acceptance_bars,
@@ -277,6 +294,11 @@ def _macro_state_payload(
         "next_conditions": list(result.next_conditions),
         "data_status": result.data_status.value,
     }
+
+
+def _level_tolerance_zone(level: float, tolerance_bps: float) -> dict[str, float]:
+    tolerance = level * tolerance_bps / 10_000
+    return {"lower": level - tolerance, "upper": level + tolerance}
 
 
 def _accepted_macro_reference(

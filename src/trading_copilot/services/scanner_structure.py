@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Any
 
 from trading_copilot.persistence.models import (
     ChartStructureRow,
@@ -23,6 +24,7 @@ class StructureResolution:
     structure_label: str | None = None
     structure_type: str | None = None
     breakout_level: float | None = None
+    structure_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def _compatible(plan: TradePlanRow, symbol: str, side: str, family: str) -> bool:
@@ -110,4 +112,23 @@ def resolve_macro(
     if not choices:
         return StructureResolution(reason="STRUCTURE_REQUIRED")
     row, level = min(choices, key=lambda item: (abs(price - item[1]), item[0].id))
-    return StructureResolution(structure_id=row.id, structure_label=row.label, structure_type=row.structure_type, breakout_level=level)
+    return StructureResolution(
+        structure_id=row.id,
+        structure_label=row.label,
+        structure_type=row.structure_type,
+        breakout_level=level,
+        structure_metadata={
+            "symbol": row.symbol,
+            "timeframe": row.timeframe,
+            "lower_price": float(row.lower_price) if row.lower_price is not None else None,
+            "upper_price": float(row.upper_price) if row.upper_price is not None else None,
+            "anchor_one_time": row.anchor_one_time,
+            "anchor_one_price": (
+                float(row.anchor_one_price) if row.anchor_one_price is not None else None
+            ),
+            "anchor_two_time": row.anchor_two_time,
+            "anchor_two_price": (
+                float(row.anchor_two_price) if row.anchor_two_price is not None else None
+            ),
+        },
+    )

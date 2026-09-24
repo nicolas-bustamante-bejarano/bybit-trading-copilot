@@ -113,6 +113,28 @@ def test_trend_inside_actionable_fib_is_at_location():
     assert result.status == ScannerStatus.AT_LOCATION
 
 
+def test_trend_persists_exact_visual_structure_evidence():
+    result = evaluate_trend(price=130, approach_tolerance_bps=100)
+
+    assert result.structure["definition_id"] == "fib-plan-1"
+    assert result.structure["trade_plan_id"] == "plan-1"
+    assert result.structure["swing_low"] == 100.0
+    assert result.structure["swing_high"] == 200.0
+    assert result.structure["levels"] == pytest.approx({
+        "0.236": 176.4,
+        "0.382": 161.8,
+        "0.500": 150.0,
+        "0.618": 138.2,
+        "0.786": 121.4,
+        "0.886": 111.4,
+        "1.000": 100.0,
+    })
+    assert result.structure["actionable_zone"]["name"] == "primary"
+    assert result.structure["approach_zone"] == pytest.approx(
+        {"lower": 120.186, "upper": 139.582}
+    )
+
+
 def test_trend_supportive_partial_evidence_is_reaction_developing():
     result = evaluate_trend(price=130, stoch_k=15, stoch_d=20)
 
@@ -195,6 +217,21 @@ def test_range_approaching_extreme_is_approaching_location():
 
 def test_range_at_extreme_is_at_location():
     assert evaluate_range(price=103, stoch_k=50, stoch_d=55).status == ScannerStatus.AT_LOCATION
+
+
+def test_range_persists_exact_visual_structure_evidence():
+    result = evaluate_range(price=103, approach_tolerance_bps=100)
+
+    assert result.structure == {
+        "definition_id": "range-plan-1",
+        "trade_plan_id": "plan-1",
+        "type": "RANGE",
+        "symbol": "BTCUSDT",
+        "range_low": 100.0,
+        "range_high": 120.0,
+        "actionable_level": 100.0,
+        "approach_zone": {"lower": 99.0, "upper": 101.0},
+    }
 
 
 def test_range_supportive_partial_evidence_is_reaction_developing():

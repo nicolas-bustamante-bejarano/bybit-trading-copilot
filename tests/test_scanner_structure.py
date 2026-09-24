@@ -313,6 +313,24 @@ def test_trendline_forward_extrapolation_is_correct():
     assert project_level(trendline("line"), 250, "LONG") == 130.0
 
 
+def test_macro_resolution_preserves_source_identifiable_overlay_anchors():
+    result = resolve_macro(
+        structures=[trendline("line")], side="LONG", timestamp=250, price=129
+    )
+
+    assert result.structure_id == "line"
+    assert result.structure_metadata == {
+        "symbol": "BTCUSDT",
+        "timeframe": "4H",
+        "lower_price": None,
+        "upper_price": None,
+        "anchor_one_time": 100,
+        "anchor_one_price": 100.0,
+        "anchor_two_time": 200,
+        "anchor_two_price": 120.0,
+    }
+
+
 def test_trendline_equal_timestamp_anchors_are_rejected():
     assert project_level(trendline("line", anchor_two_time=100), 150, "LONG") is None
 
