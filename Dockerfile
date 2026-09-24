@@ -12,4 +12,4 @@ COPY alembic ./alembic
 RUN pip install --no-cache-dir .
 
 EXPOSE 8000
-CMD ["sh", "-c", "python -m uvicorn trading_copilot.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "if [ -d /data ] && [ -w /data ]; then export DATABASE_URL=sqlite+aiosqlite:////data/preview.db; else export DATABASE_URL=sqlite+aiosqlite:///./preview.db; fi; alembic upgrade head && exec python -m uvicorn trading_copilot.main:app --host 0.0.0.0 --port ${PORT}"]
