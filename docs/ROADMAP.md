@@ -22,7 +22,7 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 - Current-position lifecycle reconstruction and evidence-based live position coach
 - Next.js trading workstation with account, position, journal, and system views
 
-## PR #17 — State Change Engine + Decision Feed (current)
+## PR #17 — State Change Engine + Decision Feed — MERGED
 
 - [x] Persist one mutable material-state cursor per symbol
 - [x] Record append-only meaningful state changes
@@ -35,7 +35,7 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 - [x] Expose read-only state-change feed and monitor status APIs
 - [x] Show recent state changes, monitor status, and automatic snapshots in the frontend
 
-## PR #18 — Production Hosting Foundation (current)
+## PR #18 — Production Hosting Foundation — MERGED
 
 - [x] Railway project configuration for `copilot-api`, `copilot-web`, and PostgreSQL
 - [x] Deterministic FastAPI and Next.js production containers
@@ -57,14 +57,14 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 - [x] Leverage shown only as a margin estimate; it never increases risk quantity
 - [ ] Streamed candle updates and richer markers remain future work
 
-## PR #20 — Workspace UX Completion (current)
+## PR #20 — Workspace UX Completion — MERGED
 
-- [ ] Complete in-workspace trade-plan editor
-- [ ] Fib/range overlays and editing
-- [ ] Full form-based structure editing
-- [ ] State-change markers, evidence, sizing, and compact flow panels
+- [x] Complete in-workspace trade-plan editor
+- [x] Fib/range overlays and editing
+- [x] Full form-based structure editing
+- [x] State-change markers, evidence, sizing, and compact flow panels
 
-## PR #21 — Setup Scanner
+## PR #21 — Setup Scanner — MERGED
 
 - Persistent watchlists and multi-symbol market evaluation
 - Trend Pullback candidates
@@ -75,13 +75,14 @@ Location earns attention. Initial evidence may earn a probe. Additional size req
 - States: `IGNORE`, `WATCH`, `APPROACHING_LOCATION`, `AT_LOCATION`, `REACTION_DEVELOPING`, `APPROACHING_BREAKOUT`, `BREAKOUT_ATTEMPT`, `ACCEPTANCE_PENDING`, `BREAKOUT_ACCEPTED`, `RETEST_PENDING`, `TRIGGER_ARMED`
 - No numeric setup score
 
-## PR #22 — Lower-Timeframe Trigger Engine
+## PR #22 — Lower-Timeframe Trigger Engine — IN REVIEW
 
-- Deviation/reclaim, failed breakout, breakout acceptance, and retest hold/failure
-- Failed auction, rejection/acceptance, structure rotation, flow confirmation, and continuation
-- Reaction and trigger remain separate evidence
-- Macro Breakout lifecycle from macro context through acceptance, retest, probe, and confirmed continuation
-- Manual trendlines, support/resistance zones, range boundaries, and macro targets first
+- Deterministic 5m/15m trigger evaluation begins only after a setup reaches `TRIGGER_ARMED`
+- Deviation/reclaim and macro retest/hold patterns use completed post-arm bars with explicit failure handling
+- Reaction evidence remains separate from trigger confirmation
+- Arm-keyed attempts and append-only transitions preserve restart, concurrency, and re-arm safety
+- The process monitor shares one immutable market snapshot per symbol and latches confirmed attempts
+- Read-only trigger APIs and scanner workspace evidence support manual execution only; confirmation grants no order or sizing permission
 
 ## PR #23 — Realtime Transport + Alerts
 

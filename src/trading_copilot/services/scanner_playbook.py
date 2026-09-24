@@ -188,6 +188,13 @@ def evaluate_scanner_playbook(
         evaluated_at=evaluated_at or datetime.now(UTC),
         context=context,
         location=evaluation["location"],
+        structure=_visual_structure(
+            resolution=resolution,
+            family=family,
+            side=side,
+            location=evaluation["location"],
+            approach_tolerance_bps=approach_tolerance_bps,
+        ),
         reaction={
             "state": evaluation["reaction_state"],
             "momentum": evaluation["momentum"],
@@ -198,3 +205,59 @@ def evaluate_scanner_playbook(
         data_status=data_status,
         linked_trade_plan_id=linked_trade_plan_id,
     )
+
+
+def _visual_structure(
+    *,
+    resolution,
+    family: str,
+    side: Side,
+    location: dict,
+    approach_tolerance_bps: float,
+) -> dict:
+    if family == "TREND_PULLBACK" and resolution.fib is not None:
+        enabled_zones = [zone for zone in location.get("zones", []) if zone.get("enabled")]
+        active_name = location.get("active_zone")
+        actionable = next(
+            (zone for zone in enabled_zones if zone.get("name") == active_name),
+            min(enabled_zones, key=lambda zone: zone["distance_bps"], default=None),
+        )
+        approach_zone = None
+        if actionable is not None:
+            lower = float(actionable["lower"])
+            upper = float(actionable["upper"])
+            approach_zone = {
+                "lower": lower * (1 - approach_tolerance_bps / 10_000),
+                "upper": upper * (1 + approach_tolerance_bps / 10_000),
+            }
+        return {
+            "definition_id": resolution.fib.id,
+            "trade_plan_id": resolution.trade_plan_id,
+            "type": "FIB_RETRACEMENT",
+            "symbol": resolution.fib.symbol,
+            "direction": resolution.fib.direction,
+            "swing_low": float(resolution.fib.swing_low),
+            "swing_high": float(resolution.fib.swing_high),
+            "levels": location.get("levels", {}),
+            "actionable_zone": actionable,
+            "approach_zone": approach_zone,
+        }
+    if family == "RANGE" and resolution.range is not None:
+        low = float(resolution.range.range_low)
+        high = float(resolution.range.range_high)
+        actionable_level = low if side == Side.LONG else high
+        tolerance = actionable_level * approach_tolerance_bps / 10_000
+        return {
+            "definition_id": resolution.range.id,
+            "trade_plan_id": resolution.trade_plan_id,
+            "type": "RANGE",
+            "symbol": resolution.range.symbol,
+            "range_low": low,
+            "range_high": high,
+            "actionable_level": actionable_level,
+            "approach_zone": {
+                "lower": actionable_level - tolerance,
+                "upper": actionable_level + tolerance,
+            },
+        }
+    return {}

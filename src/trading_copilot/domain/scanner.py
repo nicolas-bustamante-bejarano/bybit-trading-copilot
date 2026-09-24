@@ -31,6 +31,33 @@ class ScannerSetupType(StrEnum):
     MACRO_BREAKOUT_SHORT = "MACRO_BREAKOUT_SHORT"
 
 
+SCANNER_SETUP_FAMILIES = {
+    "TREND_PULLBACK": (
+        ScannerSetupType.TREND_PULLBACK_LONG,
+        ScannerSetupType.TREND_PULLBACK_SHORT,
+    ),
+    "RANGE": (ScannerSetupType.RANGE_LONG, ScannerSetupType.RANGE_SHORT),
+    "MACRO_BREAKOUT": (
+        ScannerSetupType.MACRO_BREAKOUT_LONG,
+        ScannerSetupType.MACRO_BREAKOUT_SHORT,
+    ),
+}
+
+
+def enabled_setup_types(enabled_playbooks: list[str]) -> list[ScannerSetupType]:
+    enabled: set[ScannerSetupType] = set()
+    for configured in enabled_playbooks:
+        normalized = configured.upper()
+        if normalized in SCANNER_SETUP_FAMILIES:
+            enabled.update(SCANNER_SETUP_FAMILIES[normalized])
+            continue
+        try:
+            enabled.add(ScannerSetupType(normalized))
+        except ValueError as exc:
+            raise ValueError(f"unsupported scanner playbook: {configured}") from exc
+    return [setup for setup in ScannerSetupType if setup in enabled]
+
+
 class ScannerDataStatus(StrEnum):
     CONFIRMED = "CONFIRMED"
     PARTIAL = "PARTIAL"

@@ -7,7 +7,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from trading_copilot.domain.scanner import ScannerResult, ScannerSetupType, ScannerStatus
+from trading_copilot.domain.scanner import (
+    ScannerResult,
+    ScannerStatus,
+    enabled_setup_types,
+)
 from trading_copilot.persistence.models import (
     ChartStructureRow,
     FibDefinitionRow,
@@ -22,18 +26,6 @@ from trading_copilot.services.scanner_playbook import evaluate_scanner_playbook
 from trading_copilot.services.scanner_snapshot import ScannerSymbolSnapshot
 from trading_copilot.services.scanner_structure import resolve_macro
 
-FAMILY_SETUPS = {
-    "TREND_PULLBACK": (
-        ScannerSetupType.TREND_PULLBACK_LONG,
-        ScannerSetupType.TREND_PULLBACK_SHORT,
-    ),
-    "RANGE": (ScannerSetupType.RANGE_LONG, ScannerSetupType.RANGE_SHORT),
-    "MACRO_BREAKOUT": (
-        ScannerSetupType.MACRO_BREAKOUT_LONG,
-        ScannerSetupType.MACRO_BREAKOUT_SHORT,
-    ),
-}
-
 ACCEPTED_MACRO_STATUSES = {
     ScannerStatus.BREAKOUT_ACCEPTED.value,
     ScannerStatus.RETEST_PENDING.value,
@@ -45,20 +37,6 @@ ACCEPTED_MACRO_STATUSES = {
 class SymbolEvaluationOutcome:
     results: list[ScannerResult] = field(default_factory=list)
     failed_setups: dict[str, str] = field(default_factory=dict)
-
-
-def enabled_setup_types(enabled_playbooks: list[str]) -> list[ScannerSetupType]:
-    enabled: set[ScannerSetupType] = set()
-    for configured in enabled_playbooks:
-        normalized = configured.upper()
-        if normalized in FAMILY_SETUPS:
-            enabled.update(FAMILY_SETUPS[normalized])
-            continue
-        try:
-            enabled.add(ScannerSetupType(normalized))
-        except ValueError as exc:
-            raise ValueError(f"unsupported scanner playbook: {configured}") from exc
-    return [setup for setup in ScannerSetupType if setup in enabled]
 
 
 async def evaluate_symbol(
@@ -180,8 +158,7 @@ def _evaluate_macro(
         pinned_structure_id=pinned_structure_id,
     )
     if resolution.reason:
-        if accepted_reference is not None:
-            raise RuntimeError("ACCEPTED_STRUCTURE_UNAVAILABLE")
+        stale_accepted_reference = accepted_reference is not None
         result = ScannerResult(
             symbol=snapshot.symbol,
             setup_type=watched.setup_type,
@@ -189,7 +166,9 @@ def _evaluate_macro(
             status=ScannerStatus.WATCH,
             price=snapshot.current_price,
             evaluated_at=snapshot.evaluated_at,
-            blocking_reasons=[resolution.reason],
+            blocking_reasons=[
+                "STRUCTURE_REQUIRED" if stale_accepted_reference else resolution.reason
+            ],
             next_conditions=["define actionable breakout structure"],
             data_status=snapshot.data_status,
             linked_trade_plan_id=watched.trade_plan_id,
@@ -205,6 +184,9 @@ def _evaluate_macro(
             qualifying_close_count=0,
             required_acceptance_bars=watchlist_item.acceptance_bars,
         )
+        if stale_accepted_reference:
+            state["reconciliation_reason"] = "STALE_STRUCTURE_REFERENCE_RECONCILED"
+            state["lifecycle_reset_reason"] = "STALE_STRUCTURE_REFERENCE_RECONCILED"
         return result, state
 
     lifecycle_level = (
@@ -226,6 +208,7 @@ def _evaluate_macro(
         structure_metadata={
             "label": resolution.structure_label,
             "type": resolution.structure_type,
+            **resolution.structure_metadata,
         },
         evaluated_at=snapshot.evaluated_at,
     )
@@ -262,6 +245,9 @@ def _evaluate_macro(
         distance_bps=macro.distance_bps,
         qualifying_close_count=macro.qualifying_close_count,
         required_acceptance_bars=macro.required_acceptance_bars,
+        approach_tolerance_bps=float(watchlist_item.approach_tolerance_bps),
+        retest_tolerance_bps=float(watchlist_item.retest_tolerance_bps),
+        source_metadata=resolution.structure_metadata,
     )
     return result, state
 
@@ -277,7 +263,25 @@ def _macro_state_payload(
     distance_bps: float | None,
     qualifying_close_count: int,
     required_acceptance_bars: int,
+    approach_tolerance_bps: float | None = None,
+    retest_tolerance_bps: float | None = None,
+    source_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    structure = {
+        "structure_id": structure_id,
+        "label": structure_label,
+        "type": structure_type,
+        "breakout_level": breakout_level,
+        **(source_metadata or {}),
+    }
+    if breakout_level is not None and approach_tolerance_bps is not None:
+        structure["approach_zone"] = _level_tolerance_zone(
+            breakout_level, approach_tolerance_bps
+        )
+    if breakout_level is not None and retest_tolerance_bps is not None:
+        structure["retest_zone"] = _level_tolerance_zone(
+            breakout_level, retest_tolerance_bps
+        )
     return {
         **lifecycle_state,
         "symbol": result.symbol,
@@ -286,12 +290,7 @@ def _macro_state_payload(
         "status": result.status.value,
         "price": result.price,
         "evaluated_at": result.evaluated_at.isoformat(),
-        "structure": {
-            "structure_id": structure_id,
-            "label": structure_label,
-            "type": structure_type,
-            "breakout_level": breakout_level,
-        },
+        "structure": structure,
         "distance_bps": distance_bps,
         "qualifying_close_count": qualifying_close_count,
         "required_acceptance_bars": required_acceptance_bars,
@@ -299,6 +298,11 @@ def _macro_state_payload(
         "next_conditions": list(result.next_conditions),
         "data_status": result.data_status.value,
     }
+
+
+def _level_tolerance_zone(level: float, tolerance_bps: float) -> dict[str, float]:
+    tolerance = level * tolerance_bps / 10_000
+    return {"lower": level - tolerance, "upper": level + tolerance}
 
 
 def _accepted_macro_reference(

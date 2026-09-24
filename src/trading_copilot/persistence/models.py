@@ -175,6 +175,61 @@ class ScannerTransitionRow(SymbolMixin, Base):
     version: Mapped[int] = mapped_column()
 
 
+class TriggerAttemptRow(SymbolMixin, Base):
+    __tablename__ = "trigger_attempts"
+    __table_args__ = (
+        UniqueConstraint("watched_setup_id", "arm_key", name="uq_trigger_attempt_arm"),
+        Index("ix_trigger_attempt_symbol_type", "symbol", "setup_type"),
+        Index("ix_trigger_attempt_last_evaluated", "last_evaluated_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    watched_setup_id: Mapped[str] = mapped_column(
+        ForeignKey("watched_setups.id", ondelete="CASCADE"), index=True
+    )
+    setup_type: Mapped[str] = mapped_column(String(64))
+    arm_key: Mapped[str] = mapped_column(String(160))
+    arm_source: Mapped[str] = mapped_column(String(48))
+    # Kept as an indexed durable identifier rather than an FK so trigger audit history
+    # does not depend on scanner-transition retention policy.
+    arm_transition_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    armed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reference_level: Mapped[Decimal] = mapped_column(Numeric(28, 12))
+    reference_source: Mapped[str] = mapped_column(String(48))
+    reference_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    retest_tolerance_bps: Mapped[Decimal] = mapped_column(Numeric(12, 4))
+    failure_tolerance_bps: Mapped[Decimal] = mapped_column(Numeric(12, 4))
+    state: Mapped[str] = mapped_column(String(32))
+    result: Mapped[dict] = mapped_column(JSON)
+    version: Mapped[int] = mapped_column(default=1)
+    first_evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class TriggerTransitionRow(SymbolMixin, Base):
+    __tablename__ = "trigger_transitions"
+    __table_args__ = (
+        UniqueConstraint(
+            "trigger_attempt_id", "version", name="uq_trigger_transition_version"
+        ),
+        Index("ix_trigger_transition_symbol_time", "symbol", "timestamp"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    trigger_attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("trigger_attempts.id", ondelete="CASCADE"), index=True
+    )
+    setup_type: Mapped[str] = mapped_column(String(64))
+    from_state: Mapped[str | None] = mapped_column(String(32))
+    to_state: Mapped[str] = mapped_column(String(32))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    result_before: Mapped[dict] = mapped_column(JSON)
+    result_after: Mapped[dict] = mapped_column(JSON)
+    version: Mapped[int] = mapped_column()
+
+
 class FibDefinitionRow(SymbolMixin, OptionalPlanChildBase, Base):
     __tablename__ = "fib_definitions"
     direction: Mapped[str] = mapped_column(String(8))

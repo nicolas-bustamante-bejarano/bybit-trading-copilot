@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     setup_scanner_enabled: bool = False
     setup_scanner_interval_seconds: float = Field(default=30.0, gt=0)
     setup_scanner_concurrency: int = Field(default=4, ge=1)
+    trigger_monitor_enabled: bool = False
+    trigger_monitor_interval_seconds: float = Field(default=15.0, gt=0)
+    trigger_monitor_concurrency: int = Field(default=4, ge=1)
 
     @model_validator(mode="after")
     def validate_database(self):
@@ -35,6 +38,8 @@ class Settings(BaseSettings):
             "postgresql+asyncpg://"
         ):
             raise ValueError("APP_ENV=prod requires a PostgreSQL DATABASE_URL")
+        if self.trigger_monitor_enabled and not self.setup_scanner_enabled:
+            raise ValueError("TRIGGER_MONITOR_ENABLED requires SETUP_SCANNER_ENABLED")
         return self
 
     @property

@@ -251,6 +251,10 @@ async def test_fib_and_range_definitions_persist_and_read_back(journal_client):
     assert stored_fib["symbol"] == "ETHUSDT"
     assert stored_fib["levels"]["0.000"] == 200
     assert (await journal_client.get(f"/trade-plans/{plan['id']}/range-definitions")).json()[0]["range_low"] == 110
+    assert (await journal_client.delete(f"/trade-plans/{plan['id']}/fib-definition")).status_code == 204
+    assert (await journal_client.delete(f"/trade-plans/{plan['id']}/range-definition")).status_code == 204
+    assert (await journal_client.get(f"/trade-plans/{plan['id']}/fib-definitions")).json() == []
+    assert (await journal_client.get(f"/trade-plans/{plan['id']}/range-definitions")).json() == []
 
 
 @pytest.mark.asyncio

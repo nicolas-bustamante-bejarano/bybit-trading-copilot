@@ -275,6 +275,16 @@ async def test_macro_persisted_state_contains_canonical_decision_evidence(sessio
             "label": "daily resistance",
             "type": "HORIZONTAL_ZONE",
             "breakout_level": 100.0,
+            "symbol": "BTCUSDT",
+            "timeframe": "1D",
+            "lower_price": 95.0,
+            "upper_price": 100.0,
+            "anchor_one_time": None,
+            "anchor_one_price": None,
+            "anchor_two_time": None,
+            "anchor_two_price": None,
+            "approach_zone": {"lower": 99.0, "upper": 101.0},
+            "retest_zone": {"lower": 99.5, "upper": 100.5},
         },
         "distance_bps": 100.0,
         "qualifying_close_count": 0,
@@ -321,6 +331,16 @@ async def test_macro_transition_preserves_canonical_before_and_after_snapshots(s
         "label": "daily resistance",
         "type": "HORIZONTAL_ZONE",
         "breakout_level": 100.0,
+        "symbol": "BTCUSDT",
+        "timeframe": "1D",
+        "lower_price": 95.0,
+        "upper_price": 100.0,
+        "anchor_one_time": None,
+        "anchor_one_price": None,
+        "anchor_two_time": None,
+        "anchor_two_price": None,
+        "approach_zone": {"lower": 99.0, "upper": 101.0},
+        "retest_zone": {"lower": 99.5, "upper": 100.5},
     }
     assert transition.state_after["distance_bps"] == pytest.approx(100.0)
     assert transition.state_after["qualifying_close_count"] == 1
@@ -457,17 +477,20 @@ async def test_accepted_trendline_keeps_original_reference_level_for_retest(
     assert persisted.state["distance_bps"] == pytest.approx(40.0)
 
 
+@pytest.mark.parametrize(
+    "status", ["BREAKOUT_ACCEPTED", "RETEST_PENDING", "TRIGGER_ARMED"]
+)
 @pytest.mark.parametrize("structure_state", ["deleted", "inactive", "malformed"])
 @pytest.mark.asyncio
-async def test_unavailable_accepted_structure_leaves_persisted_lifecycle_untouched(
-    sessions, structure_state
+async def test_stale_accepted_structure_reference_self_heals(
+    sessions, structure_state, status
 ):
     prior = accepted_state("LONG")
     async with sessions() as session:
         current = WatchedSetupRow(
             symbol="BTCUSDT",
             setup_type="MACRO_BREAKOUT_LONG",
-            status="BREAKOUT_ACCEPTED",
+            status=status,
             state=prior,
         )
         session.add(current)
@@ -477,8 +500,6 @@ async def test_unavailable_accepted_structure_leaves_persisted_lifecycle_untouch
             session.add(accepted_trendline(malformed=True))
         await session.commit()
         watched_id = current.id
-        version = current.version
-
         outcome = await evaluate_symbol(
             session,
             watchlist("MACRO_BREAKOUT_LONG"),
@@ -491,14 +512,20 @@ async def test_unavailable_accepted_structure_leaves_persisted_lifecycle_untouch
             select(func.count(ScannerTransitionRow.id))
         )
 
-    assert outcome.results == []
-    assert outcome.failed_setups == {
-        "MACRO_BREAKOUT_LONG": "ACCEPTED_STRUCTURE_UNAVAILABLE"
-    }
-    assert reloaded.status == "BREAKOUT_ACCEPTED"
-    assert reloaded.state == prior
-    assert reloaded.version == version
-    assert transition_count == 0
+    assert outcome.failed_setups == {}
+    assert outcome.results[0].status == ScannerStatus.WATCH
+    assert outcome.results[0].blocking_reasons == ["STRUCTURE_REQUIRED"]
+    assert reloaded.status == "WATCH"
+    assert reloaded.state["reconciliation_reason"] == "STALE_STRUCTURE_REFERENCE_RECONCILED"
+    assert reloaded.state["lifecycle_reset_reason"] == (
+        "STALE_STRUCTURE_REFERENCE_RECONCILED"
+    )
+    assert reloaded.state["lifecycle_episode"] == 2
+    assert not any(key.startswith("accepted_") for key in reloaded.state)
+    assert reloaded.state["structure"]["structure_id"] is None
+    assert reloaded.state["structure"]["breakout_level"] is None
+    assert reloaded.version == 2
+    assert transition_count == 1
 
 
 @pytest.mark.asyncio

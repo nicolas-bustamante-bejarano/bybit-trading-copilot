@@ -6,8 +6,8 @@ import { api } from "@/lib/api/client";
 import type { TradePlan } from "@/lib/api/types";
 import { Panel } from "../ui";
 
-export type Fib = { direction: string; swing_low: string; swing_high: string; levels: Record<string, number> };
-export type Range = { range_low: string; range_high: string };
+export type Fib = { direction: string; swing_low: string | number; swing_high: string | number; levels: Record<string, number> };
+export type Range = { range_low: string | number; range_high: string | number };
 
 export function FibRangeEditor({ plan, onChange }: { plan: TradePlan | null; onChange: (fib: Fib | null, range: Range | null) => void }) {
   const [fib, setFib] = useState<Fib | null>(null);

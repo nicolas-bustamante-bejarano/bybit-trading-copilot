@@ -69,6 +69,7 @@ class SetupScannerMonitor:
         self.setup_count = 0
         self.evaluated_symbols: list[str] = []
         self.failed_symbols: list[str] = []
+        self._evaluation_lock = asyncio.Lock()
 
     def status(self) -> ScannerMonitorStatus:
         return ScannerMonitorStatus(
@@ -87,6 +88,7 @@ class SetupScannerMonitor:
         )
 
     async def run_cycle(self) -> None:
+        await self._evaluation_lock.acquire()
         started_at = datetime.now(UTC)
         started_clock = perf_counter()
         self.last_cycle_started_at = started_at
@@ -138,6 +140,26 @@ class SetupScannerMonitor:
         finally:
             self.last_cycle_completed_at = datetime.now(UTC)
             self.last_cycle_duration_ms = (perf_counter() - started_clock) * 1000
+            self._evaluation_lock.release()
+
+    async def reevaluate_symbol(self, symbol: str) -> SymbolEvaluationOutcome:
+        normalized = symbol.strip().upper()
+        if not normalized:
+            raise ValueError("symbol must not be empty")
+        async with self._evaluation_lock:
+            async with self.sessions() as session:
+                item = await session.scalar(
+                    select(ScannerWatchlistRow).where(
+                        ScannerWatchlistRow.symbol == normalized,
+                        ScannerWatchlistRow.enabled.is_(True),
+                    )
+                )
+            if item is None:
+                raise ValueError("enabled scanner watchlist symbol not found")
+            evaluated_at = datetime.now(UTC)
+            snapshot = await self.build_snapshot(normalized, evaluated_at)
+            async with self.sessions() as session:
+                return await self.compose_symbol(session, item, snapshot)
 
     async def run(self) -> None:
         if not self.enabled:

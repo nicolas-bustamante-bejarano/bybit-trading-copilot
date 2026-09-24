@@ -70,7 +70,8 @@ export function PriceChart({ chart, plan, structures, changes, fib, range }: { c
         addLine(structure.upper_price, `${structure.label ?? "ZONE"} HIGH`);
       } else if (structure.anchor_one_time && structure.anchor_one_price && structure.anchor_two_time && structure.anchor_two_price) {
         const trendline = view.current.addSeries(LineSeries, { color: "#f59e0b", title: structure.label ?? "TRENDLINE" });
-        trendline.setData([{ time: structure.anchor_one_time as never, value: Number(structure.anchor_one_price) }, { time: structure.anchor_two_time as never, value: Number(structure.anchor_two_price) }]);
+        const chartTime = (value: number) => value > 10_000_000_000 ? Math.floor(value / 1000) : value;
+        trendline.setData([{ time: chartTime(structure.anchor_one_time) as never, value: Number(structure.anchor_one_price) }, { time: chartTime(structure.anchor_two_time) as never, value: Number(structure.anchor_two_price) }]);
         series.push(trendline);
       }
     });

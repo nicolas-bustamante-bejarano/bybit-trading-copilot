@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,9 @@ from trading_copilot.persistence.models import (
 from trading_copilot.persistence.repository import TradePlanRepository
 from trading_copilot.services.bybit_public import BybitPublicClient
 from trading_copilot.services.indicators import fib_retracements
+from trading_copilot.services.scanner_invalidation import (
+    invalidate_plan_structure_dependents,
+)
 from trading_copilot.services.trade_replay import build_entry_replay_review, parse_klines
 
 router = APIRouter(prefix="/trade-plans", tags=["trade journal"])
@@ -362,11 +365,32 @@ async def put_fib(plan_id: str, body: FibDefinitionInput, session: AsyncSession 
         row = FibDefinitionRow(trade_plan_id=plan_id, symbol=plan.symbol, **body.model_dump())
         session.add(row)
     else:
+        changed = any(getattr(row, key) != value for key, value in body.model_dump().items())
+        if changed:
+            await invalidate_plan_structure_dependents(
+                session, trade_plan_id=plan_id, setup_family="TREND_PULLBACK"
+            )
         for key, value in body.model_dump().items():
             setattr(row, key, value)
     await session.commit()
     await session.refresh(row)
     return dump(row) | {"levels": fib_levels(row)}
+
+
+@router.delete("/{plan_id}/fib-definition", status_code=204)
+async def delete_fib(plan_id: str, session: AsyncSession = Depends(get_session)) -> Response:
+    await require_plan(session, plan_id)
+    row = await session.scalar(
+        select(FibDefinitionRow).where(FibDefinitionRow.trade_plan_id == plan_id)
+    )
+    if row is None:
+        raise HTTPException(404, "Fib definition not found")
+    await invalidate_plan_structure_dependents(
+        session, trade_plan_id=plan_id, setup_family="TREND_PULLBACK"
+    )
+    await session.delete(row)
+    await session.commit()
+    return Response(status_code=204)
 
 
 @router.get("/{plan_id}/range-definitions")
@@ -384,8 +408,31 @@ async def put_range(plan_id: str, body: RangeDefinitionInput, session: AsyncSess
         row = RangeDefinitionRow(trade_plan_id=plan_id, symbol=plan.symbol, **body.model_dump())
         session.add(row)
     else:
+        changed = any(getattr(row, key) != value for key, value in body.model_dump().items())
+        if changed:
+            await invalidate_plan_structure_dependents(
+                session, trade_plan_id=plan_id, setup_family="RANGE"
+            )
         for key, value in body.model_dump().items():
             setattr(row, key, value)
     await session.commit()
     await session.refresh(row)
     return dump(row)
+
+
+@router.delete("/{plan_id}/range-definition", status_code=204)
+async def delete_range(
+    plan_id: str, session: AsyncSession = Depends(get_session)
+) -> Response:
+    await require_plan(session, plan_id)
+    row = await session.scalar(
+        select(RangeDefinitionRow).where(RangeDefinitionRow.trade_plan_id == plan_id)
+    )
+    if row is None:
+        raise HTTPException(404, "Range definition not found")
+    await invalidate_plan_structure_dependents(
+        session, trade_plan_id=plan_id, setup_family="RANGE"
+    )
+    await session.delete(row)
+    await session.commit()
+    return Response(status_code=204)

@@ -8,9 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from trading_copilot.api.journal import router as journal_router
 from trading_copilot.api.scanner import router as scanner_router
+from trading_copilot.api.scanner import (
+    set_reevaluate_provider as set_scanner_reevaluate_provider,
+)
 from trading_copilot.api.scanner import set_status_provider as set_scanner_status_provider
 from trading_copilot.api.state_changes import router as state_changes_router
 from trading_copilot.api.state_changes import set_status_provider
+from trading_copilot.api.trigger import router as trigger_router
+from trading_copilot.api.trigger import set_trigger_status_provider
 from trading_copilot.api.workspace import router as workspace_router
 from trading_copilot.config import settings
 from trading_copilot.domain.execution import AddProjectionRequest, ExecutionPlanRequest
@@ -47,6 +52,8 @@ from trading_copilot.services.scanner_snapshot import build_scanner_snapshot
 from trading_copilot.services.sizing import build_sizing_plan
 from trading_copilot.services.state_change_monitor import StateChangeMonitor
 from trading_copilot.services.structural_risk import structural_risk_summary
+from trading_copilot.services.trigger_monitor import TriggerMonitor
+from trading_copilot.services.trigger_snapshot import build_trigger_snapshot
 
 live_market = LiveMarketStore()
 live_stream: BybitLinearStream | None = None
@@ -55,6 +62,8 @@ state_change_monitor: StateChangeMonitor | None = None
 state_change_monitor_task: asyncio.Task | None = None
 setup_scanner_monitor: SetupScannerMonitor | None = None
 setup_scanner_monitor_task: asyncio.Task | None = None
+trigger_monitor: TriggerMonitor | None = None
+trigger_monitor_task: asyncio.Task | None = None
 
 
 async def _build_scanner_snapshot(symbol: str, evaluated_at):
@@ -65,11 +74,21 @@ async def _build_scanner_snapshot(symbol: str, evaluated_at):
     )
 
 
+async def _build_trigger_snapshot(symbol: str, evaluated_at):
+    return await build_trigger_snapshot(
+        symbol,
+        evaluated_at=evaluated_at,
+        live_market=live_market,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global live_stream, live_stream_task, state_change_monitor, state_change_monitor_task
     global setup_scanner_monitor, setup_scanner_monitor_task
+    global trigger_monitor, trigger_monitor_task
     setup_scanner_monitor_task = None
+    trigger_monitor_task = None
     if settings.live_stream_enabled:
         live_stream = BybitLinearStream(
             settings.stream_symbols,
@@ -96,8 +115,21 @@ async def lifespan(_: FastAPI):
         compose_symbol=evaluate_symbol,
     )
     set_scanner_status_provider(setup_scanner_monitor.status)
+    set_scanner_reevaluate_provider(
+        getattr(setup_scanner_monitor, "reevaluate_symbol", None)
+    )
     if settings.setup_scanner_enabled:
         setup_scanner_monitor_task = asyncio.create_task(setup_scanner_monitor.run())
+    trigger_monitor = TriggerMonitor(
+        enabled=settings.trigger_monitor_enabled,
+        interval_seconds=settings.trigger_monitor_interval_seconds,
+        concurrency=settings.trigger_monitor_concurrency,
+        sessions=session_factory,
+        build_snapshot=_build_trigger_snapshot,
+    )
+    set_trigger_status_provider(trigger_monitor.status)
+    if settings.trigger_monitor_enabled:
+        trigger_monitor_task = asyncio.create_task(trigger_monitor.run())
     try:
         yield
     finally:
@@ -116,6 +148,11 @@ async def lifespan(_: FastAPI):
             with suppress(asyncio.CancelledError):
                 await setup_scanner_monitor_task
             setup_scanner_monitor_task = None
+        if trigger_monitor_task is not None:
+            trigger_monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await trigger_monitor_task
+            trigger_monitor_task = None
 
 
 app = FastAPI(title="Bybit Trading Copilot", version="0.8.0", lifespan=lifespan)
@@ -123,6 +160,7 @@ app.include_router(journal_router)
 app.include_router(workspace_router)
 app.include_router(state_changes_router)
 app.include_router(scanner_router)
+app.include_router(trigger_router)
 
 
 @app.get("/health")

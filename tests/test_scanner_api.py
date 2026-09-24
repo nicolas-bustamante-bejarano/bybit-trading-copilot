@@ -16,6 +16,7 @@ from trading_copilot.persistence.models import (
     ScannerWatchlistRow,
     WatchedSetupRow,
 )
+from trading_copilot.services.scanner_composer import SymbolEvaluationOutcome
 from trading_copilot.services.scanner_monitor import ScannerMonitorStatus
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -34,11 +35,13 @@ async def api_context(tmp_path):
 
     app.dependency_overrides[get_session] = override_session
     scanner_api.set_status_provider(None)
+    scanner_api.set_reevaluate_provider(None)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         yield client, sessions
     scanner_api.set_status_provider(None)
+    scanner_api.set_reevaluate_provider(None)
     app.dependency_overrides.clear()
     await engine.dispose()
 
@@ -139,6 +142,27 @@ async def test_status_defaults_and_injected_provider(api_context):
     assert response.json()["running"] is True
     assert response.json()["evaluated_symbols"] == ["ETHUSDT"]
     assert response.json()["failed_symbols"] == ["BTCUSDT"]
+
+
+@pytest.mark.asyncio
+async def test_reevaluate_endpoint_delegates_to_safe_monitor_provider(api_context):
+    client, _ = api_context
+    calls = []
+
+    async def reevaluate(symbol):
+        calls.append(symbol)
+        return SymbolEvaluationOutcome(failed_setups={"RANGE_LONG": "STRUCTURE_REQUIRED"})
+
+    scanner_api.set_reevaluate_provider(reevaluate)
+    response = await client.post("/scanner/reevaluate/btcusdt")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "symbol": "BTCUSDT",
+        "setup_count": 0,
+        "failed_setups": {"RANGE_LONG": "STRUCTURE_REQUIRED"},
+    }
+    assert calls == ["BTCUSDT"]
 
 
 @pytest.mark.asyncio

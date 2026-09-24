@@ -4,7 +4,9 @@ import { useCallback, useMemo, useState } from "react";
 import { ChevronDown, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { usePolling } from "@/lib/api/use-polling";
-import type { ScannerSetup, ScannerSetupState, ScannerStatus, ScannerTransition, ScannerWatchlistInput, ScannerWatchlistItem } from "@/lib/api/types";
+import type { ScannerSetup, ScannerSetupState, ScannerStatus, ScannerTransition, ScannerWatchlistInput, ScannerWatchlistItem, TriggerCurrent, TriggerMonitorStatus, TriggerResult, TriggerState, TriggerTransition } from "@/lib/api/types";
+import { candidateCounts, defaultScannerTimeframe, filterScannerCandidates, hasStructuralBlocker, type ScannerTimeframe } from "@/lib/scanner-visuals";
+import { ScannerEvidenceChart } from "./scanner-evidence-chart";
 import { EmptyState, ErrorState, PageHeader, Panel } from "./ui";
 import { StatusBadge } from "./status-badge";
 
@@ -38,64 +40,111 @@ function statusTone(status: ScannerStatus): string {
   if (status.startsWith("APPROACHING_")) return "border-cyan-400/20 bg-cyan-400/5 text-cyan-300/75";
   return status === "IGNORE" ? "border-white/5 bg-white/[.02] text-slate-600" : "border-white/10 bg-white/[.03] text-slate-400";
 }
+function triggerTone(state: TriggerState): string {
+  if (state === "CONFIRMED") return "border-emerald-400/40 bg-emerald-400/10 text-emerald-200";
+  if (state === "FAILED") return "border-red-400/35 bg-red-400/10 text-red-200";
+  if (["RECLAIMED", "RETEST_HELD"].includes(state)) return "border-cyan-400/35 bg-cyan-400/10 text-cyan-200";
+  if (state === "DEVELOPING") return "border-amber-400/35 bg-amber-400/10 text-amber-200";
+  return "border-white/10 bg-white/[.03] text-slate-400";
+}
 
 export function ScannerClient() {
   const statusLoader = useCallback(() => api.getScannerStatus(), []);
   const setupsLoader = useCallback(() => api.getScannerSetups({ limit: 500 }), []);
   const watchlistLoader = useCallback(() => api.getScannerWatchlist(), []);
+  const triggerStatusLoader = useCallback(() => api.getTriggerStatus(), []);
+  const currentTriggersLoader = useCallback(() => api.getCurrentTriggers({ limit: 500 }), []);
   const monitor = usePolling(statusLoader, 12000);
   const setups = usePolling(setupsLoader, 15000);
   const watchlist = usePolling(watchlistLoader, 30000);
+  const triggerMonitor = usePolling(triggerStatusLoader, 12000);
+  const currentTriggers = usePolling(currentTriggersLoader, 12000);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [symbolFilter, setSymbolFilter] = useState("ALL");
   const [setupFilter, setSetupFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [chartTimeframe, setChartTimeframe] = useState<ScannerTimeframe>("1h");
 
-  const ordered = useMemo(() => [...(setups.data ?? [])].filter((item) => symbolFilter === "ALL" || item.symbol === symbolFilter).filter((item) => setupFilter === "ALL" || item.setup_type === setupFilter).filter((item) => statusFilter === "ALL" || item.status === statusFilter).sort((a, b) => (PRIORITY.get(a.status) ?? 99) - (PRIORITY.get(b.status) ?? 99) || (distance(a) ?? Infinity) - (distance(b) ?? Infinity) || a.symbol.localeCompare(b.symbol) || a.setup_type.localeCompare(b.setup_type)), [setups.data, symbolFilter, setupFilter, statusFilter]);
+  const ordered = useMemo(() => filterScannerCandidates(setups.data ?? [], showIgnored).filter((item) => symbolFilter === "ALL" || item.symbol === symbolFilter).filter((item) => setupFilter === "ALL" || item.setup_type === setupFilter).filter((item) => statusFilter === "ALL" || item.status === statusFilter).sort((a, b) => (PRIORITY.get(a.status) ?? 99) - (PRIORITY.get(b.status) ?? 99) || (distance(a) ?? Infinity) - (distance(b) ?? Infinity) || a.symbol.localeCompare(b.symbol) || a.setup_type.localeCompare(b.setup_type)), [setups.data, showIgnored, symbolFilter, setupFilter, statusFilter]);
   const selected = (setups.data ?? []).find((item) => item.id === selectedId) ?? null;
   const symbols = [...new Set((setups.data ?? []).map((item) => item.symbol))].sort();
   const monitorState = !monitor.data?.enabled ? "DISABLED" : monitor.data.last_error ? "DEGRADED / ERRORS" : monitor.data.running ? "RUNNING" : "IDLE";
+  const triggerBySetup = useMemo(() => new Map((currentTriggers.data ?? []).map((item) => [item.watched_setup_id, item])), [currentTriggers.data]);
+  const selectedTrigger = selected ? triggerBySetup.get(selected.id) ?? null : null;
+  const counts = candidateCounts(setups.data ?? []);
 
   return <>
-    <PageHeader eyebrow="SETUP DISCOVERY" title="Scanner" detail="Multi-symbol regime, structure, reaction, and breakout monitoring. Execution remains manual." action={<div className="flex items-center gap-3"><StatusBadge value={monitor.data?.last_error ? "WARNING" : monitor.data?.running ? "CONFIRMED" : "INDETERMINATE"}>{monitorState}</StatusBadge><button onClick={() => { void monitor.refresh(); void setups.refresh(); void watchlist.refresh(); }} className="flex items-center gap-2 rounded border border-white/10 px-3 py-2 text-xs text-slate-400"><RefreshCw size={13}/>Refresh</button></div>}/>
-    {(monitor.error || setups.error || watchlist.error) && <div className="mb-4"><ErrorState message={[monitor.error, setups.error, watchlist.error].filter(Boolean).join(" · ")}/></div>}
-    <MonitorStrip status={monitor.data}/>
+    <PageHeader eyebrow="SETUP DISCOVERY" title="Scanner" detail="Multi-symbol regime, structure, reaction, and breakout monitoring. Execution remains manual." action={<div className="flex items-center gap-3"><StatusBadge value={monitor.data?.last_error ? "WARNING" : monitor.data?.running ? "CONFIRMED" : "INDETERMINATE"}>{monitorState}</StatusBadge><button onClick={() => { void monitor.refresh(); void setups.refresh(); void watchlist.refresh(); void triggerMonitor.refresh(); void currentTriggers.refresh(); }} className="flex items-center gap-2 rounded border border-white/10 px-3 py-2 text-xs text-slate-400"><RefreshCw size={13}/>Refresh</button></div>}/>
+    {(monitor.error || setups.error || watchlist.error || triggerMonitor.error || currentTriggers.error) && <div className="mb-4"><ErrorState message={[monitor.error, setups.error, watchlist.error, triggerMonitor.error, currentTriggers.error].filter(Boolean).join(" · ")}/></div>}
+    <MonitorStrip status={monitor.data} counts={counts}/>
+    <TriggerMonitorStrip status={triggerMonitor.data}/>
+    {monitor.data?.last_error && <div className="mb-5 rounded border border-red-400/20 bg-red-400/5 p-3 text-xs text-red-200"><span className="font-semibold">Scanner degraded:</span> {monitor.data.last_error}</div>}
     {!monitor.loading && monitor.data && !monitor.data.enabled && <div className="mb-5 rounded border border-amber-400/15 bg-amber-400/5 p-3 text-xs text-amber-200/75">Scanner monitoring is disabled. Persisted observations remain available below.</div>}
-    <div className="grid gap-5 xl:grid-cols-[1.05fr_.95fr]">
-      <Panel title="Current candidates" kicker={`${ordered.length} VISIBLE`}>
-        <div className="mb-3 grid grid-cols-3 gap-2"><Filter value={symbolFilter} onChange={setSymbolFilter} label="Symbol" options={symbols}/><Filter value={setupFilter} onChange={setSetupFilter} label="Setup" options={[...SETUP_TYPES]}/><Filter value={statusFilter} onChange={setStatusFilter} label="Status" options={STATUSES}/></div>
-        {setups.data?.length ? ordered.length ? <CandidateList setups={ordered} selectedId={selectedId} onSelect={setSelectedId}/> : <EmptyState title="No candidates match these filters" detail="Adjust the symbol, setup, or status filter."/> : <EmptyState title={watchlist.data?.length ? "Scanner has not persisted a candidate observation yet." : "Add a market to begin scanning."} detail={watchlist.data?.length ? "Observations will appear after a successful scan cycle." : "Use the watchlist configuration below."}/>}
+    <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)_390px]">
+      <Panel title="Candidates" kicker={`${ordered.length} VISIBLE`}>
+        <div className="mb-3 grid gap-2"><Filter value={symbolFilter} onChange={setSymbolFilter} label="Symbol" options={symbols}/><Filter value={setupFilter} onChange={setSetupFilter} label="Setup" options={[...SETUP_TYPES]}/><Filter value={statusFilter} onChange={setStatusFilter} label="Status" options={STATUSES}/><label className="flex items-center gap-2 rounded border border-white/8 bg-black/15 px-3 py-2 text-xs text-slate-400"><input type="checkbox" checked={showIgnored} onChange={(event) => setShowIgnored(event.target.checked)}/>Show ignored</label></div>
+        {setups.data?.length
+          ? ordered.length
+            ? <CandidateList setups={ordered} triggers={triggerBySetup} selectedId={selectedId} onSelect={(id) => {
+              const next = (setups.data ?? []).find((item) => item.id === id);
+              setSelectedId(id);
+              if (next) setChartTimeframe(defaultScannerTimeframe(next.setup_type));
+            }}/>
+            : <EmptyState title="No candidates match these filters" detail="Adjust the symbol, setup, or status filter."/>
+          : <EmptyState title={watchlist.data?.length ? "Scanner has not persisted a candidate observation yet." : "Add a market to begin scanning."} detail={watchlist.data?.length ? "Observations will appear after a successful scan cycle." : "Use the watchlist configuration below."}/>
+        }
       </Panel>
-      <div className="space-y-5"><CandidateDetail setup={selected}/><TransitionHistory setup={selected}/></div>
+      <ScannerEvidenceChart setup={selected} trigger={selectedTrigger} timeframe={chartTimeframe} onTimeframeChange={setChartTimeframe} onEvidenceRefresh={async () => { await Promise.all([setups.refresh(), currentTriggers.refresh()]); }}/>
+      <div className="space-y-5"><CandidateDetail setup={selected} trigger={selectedTrigger}/><TriggerTransitionHistory trigger={selectedTrigger}/></div>
     </div>
+    <div className="mt-5"><TransitionHistory setup={selected}/></div>
     <div className="mt-5"><WatchlistPanel items={watchlist.data ?? []} onRefresh={watchlist.refresh}/></div>
   </>;
 }
 
-function MonitorStrip({ status }: { status: ReturnType<typeof usePolling<import("@/lib/api/types").ScannerMonitorStatus>>["data"] }) {
-  const facts = [["LAST SUCCESS", status?.last_success_at ? age(status.last_success_at) : "Never"], ["CYCLE", status?.last_cycle_duration_ms == null ? "—" : `${Math.round(status.last_cycle_duration_ms)} ms`], ["WATCHLIST", status?.watchlist_count ?? "—"], ["SETUPS", status?.setup_count ?? "—"], ["EVALUATED", status?.evaluated_symbols.length ?? "—"], ["FAILED", status?.failed_symbols.length ?? "—"]];
-  return <div className="mb-5 grid grid-cols-2 gap-px overflow-hidden rounded border border-white/8 bg-white/8 md:grid-cols-6">{facts.map(([name, value]) => <div key={name} className="bg-[#0d121a] p-3"><div className="mono-label">{name}</div><div className="mt-1 font-mono text-sm text-slate-300">{value}</div></div>)}</div>;
+function MonitorStrip({ status, counts }: { status: ReturnType<typeof usePolling<import("@/lib/api/types").ScannerMonitorStatus>>["data"]; counts: ReturnType<typeof candidateCounts> }) {
+  const facts = [["TRACKED", counts.tracked], ["ACTIVE", counts.active], ["NEEDS STRUCTURE", counts.needsStructure], ["ARMED", counts.armed], ["LAST SUCCESS", status?.last_success_at ? age(status.last_success_at) : "Never"], ["CYCLE", status?.last_cycle_duration_ms == null ? "—" : `${Math.round(status.last_cycle_duration_ms)} ms`], ["EVALUATED", status?.evaluated_symbols.length ?? "—"], ["FAILED", status?.failed_symbols.length ?? "—"]];
+  return <div className="mb-5 grid grid-cols-2 gap-px overflow-hidden rounded border border-white/8 bg-white/8 md:grid-cols-8">{facts.map(([name, value]) => <div key={name} className="bg-[#0d121a] p-3"><div className="mono-label">{name}</div><div className="mt-1 font-mono text-sm text-slate-300">{value}</div></div>)}</div>;
+}
+
+function TriggerMonitorStrip({ status }: { status: TriggerMonitorStatus | null }) {
+  const state = !status?.enabled ? "DISABLED" : status.last_error ? "DEGRADED" : status.running ? "RUNNING" : "IDLE";
+  const facts = [["LTF TRIGGER", state], ["LAST SUCCESS", status?.last_success_at ? age(status.last_success_at) : "Never"], ["ARMED", status?.armed_candidate_count ?? "—"], ["ELIGIBLE", status?.eligible_candidate_count ?? "—"], ["EVALUATED", status?.evaluation_count ?? "—"], ["CONFIRMED", status?.confirmed_count ?? "—"], ["FAILED SYMBOLS", status?.failed_symbols.length ?? "—"]];
+  return <div className="mb-5 grid grid-cols-2 gap-px overflow-hidden rounded border border-cyan-400/10 bg-cyan-400/10 md:grid-cols-7">{facts.map(([name, value]) => <div key={name} className="bg-[#0d121a] p-3"><div className="mono-label">{name}</div><div className="mt-1 font-mono text-sm text-slate-300">{value}</div></div>)}</div>;
 }
 
 function Filter({ label: name, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: readonly string[] }) { return <label><span className="mono-label mb-1 block">{name}</span><select value={value} onChange={(event) => onChange(event.target.value)} className={`${inputClass} w-full`}><option value="ALL">All</option>{options.map((option) => <option key={option} value={option}>{label(option)}</option>)}</select></label>; }
 
-function CandidateList({ setups, selectedId, onSelect }: { setups: ScannerSetup[]; selectedId: string | null; onSelect: (id: string) => void }) {
-  return <div className="overflow-hidden rounded border border-white/8"><div className="hidden grid-cols-[.75fr_1.3fr_.45fr_1.1fr_.65fr_.7fr_1fr_.6fr_.7fr] gap-2 border-b border-white/8 bg-black/15 px-3 py-2 font-mono text-[8px] tracking-wider text-slate-600 md:grid"><span>SYMBOL</span><span>SETUP</span><span>SIDE</span><span>STATUS</span><span>DATA</span><span>PRICE</span><span>LOCATION / STRUCTURE</span><span>DISTANCE</span><span>UPDATED</span></div>{setups.map((setup) => <button key={setup.id} onClick={() => onSelect(setup.id)} className={`grid w-full gap-2 border-b border-white/5 p-3 text-left last:border-0 md:grid-cols-[.75fr_1.3fr_.45fr_1.1fr_.65fr_.7fr_1fr_.6fr_.7fr] md:items-center ${selectedId === setup.id ? "bg-cyan-400/[.07]" : "hover:bg-white/[.025]"}`}><div className="font-semibold text-white">{setup.symbol}</div><div className="text-xs text-slate-400">{compactSetup(setup.setup_type)}</div><div className="font-mono text-[10px] text-slate-500">{text(setup.state.side) ?? (setup.setup_type.endsWith("LONG") ? "LONG" : "SHORT")}</div><span className={`w-fit rounded-sm border px-1.5 py-1 font-mono text-[8px] font-semibold ${statusTone(setup.status)}`}>{setup.status}</span><StatusBadge value={text(setup.state.data_status) ?? "INDETERMINATE"}/><div className="font-mono text-xs text-slate-300">{formatNumber(setup.state.price)}</div><div className="truncate text-xs text-slate-500" title={locationSummary(setup)}>{locationSummary(setup)}</div><div className="font-mono text-xs text-slate-400">{formatNumber(distance(setup), " bps")}</div><div className="text-[10px] text-slate-600">{age(setup.last_evaluated_at ?? setup.updated_at)}</div></button>)}</div>;
+function CandidateList({ setups, triggers, selectedId, onSelect }: { setups: ScannerSetup[]; triggers: Map<string, TriggerCurrent>; selectedId: string | null; onSelect: (id: string) => void }) {
+  return <div className="overflow-hidden rounded border border-white/8">{setups.map((setup) => { const trigger = triggers.get(setup.id); const ltf = setup.status !== "TRIGGER_ARMED" ? null : trigger?.attempt?.state ?? "ARMED"; const dataStatus = text(setup.state.data_status) ?? "INDETERMINATE"; return <button key={setup.id} onClick={() => onSelect(setup.id)} className={`w-full border-b border-white/5 p-3 text-left last:border-0 ${selectedId === setup.id ? "bg-cyan-400/[.07]" : "hover:bg-white/[.025]"}`}><div className="flex items-center justify-between gap-2"><span className="font-semibold text-white">{setup.symbol}</span><span className="font-mono text-[9px] text-slate-600">{age(setup.last_evaluated_at ?? setup.updated_at)}</span></div><div className="mt-1 text-xs text-slate-400">{compactSetup(setup.setup_type)}</div><div className="mt-2 flex flex-wrap gap-1.5"><span className={`w-fit rounded-sm border px-1.5 py-1 font-mono text-[8px] font-semibold ${statusTone(setup.status)}`}>{setup.status}</span>{hasStructuralBlocker(setup) && <span className="rounded-sm border border-amber-400/25 bg-amber-400/5 px-1.5 py-1 font-mono text-[8px] text-amber-200">NEEDS STRUCTURE</span>}{ltf && ltf !== "ARMED" ? <span className={`w-fit rounded-sm border px-1.5 py-1 font-mono text-[8px] font-semibold ${triggerTone(ltf)}`}>{ltf}</span> : ltf && <span className="rounded-sm border border-white/10 px-1.5 py-1 font-mono text-[8px] text-slate-500">{ltf}</span>}<StatusBadge value={dataStatus}>{dataStatus === "CONFIRMED" ? "DATA OK" : dataStatus}</StatusBadge></div><div className="mt-2 truncate text-[10px] text-slate-500" title={locationSummary(setup)}>{locationSummary(setup)} · {formatNumber(distance(setup), " bps")}</div></button>; })}</div>;
 }
 
-function CandidateDetail({ setup }: { setup: ScannerSetup | null }) {
+function CandidateDetail({ setup, trigger: current }: { setup: ScannerSetup | null; trigger: TriggerCurrent | null }) {
   if (!setup) return <Panel title="Candidate evidence" kicker="PERSISTED STATE"><EmptyState title="No candidate selected" detail="Select a candidate to inspect its decision evidence."/></Panel>;
   const macro = setup.setup_type.startsWith("MACRO_"); const state = setup.state; const structure = record(state.structure); const blockers = stateList(state, "blocking_reasons"); const next = stateList(state, "next_conditions");
   const context = macro ? `${compactSetup(setup.setup_type)} · ${text(state.side) ?? "—"}` : evidenceSummary(state.context);
   const location = macro ? [text(structure?.label) ?? text(structure?.type) ?? "Structure", `level ${formatNumber(structure?.breakout_level)}`, `distance ${formatNumber(state.distance_bps, " bps")}`].join(" · ") : evidenceSummary(state.location);
-  const reaction = macro ? (setup.status === "RETEST_PENDING" || setup.status === "TRIGGER_ARMED" ? "Retest evidence active" : "Not applicable before retest") : evidenceSummary(state.reaction);
-  const trigger = setup.status === "TRIGGER_ARMED" ? "Lower-timeframe trigger evaluation armed" : next[0] ? humanReason(next[0]) : label(setup.status);
-  return <Panel title={`${setup.symbol} · ${compactSetup(setup.setup_type)}`} kicker={`VERSION ${setup.version}`}><div className="space-y-4"><div className="grid gap-2 sm:grid-cols-5">{[["CONTEXT", context], ["LOCATION", location], ["REACTION", reaction], ["TRIGGER", trigger], ["DATA", text(state.data_status) ?? "Indeterminate"]].map(([name, value]) => <div key={name} className="rounded border border-white/7 bg-black/15 p-2.5"><div className="mono-label">{name}</div><div className="mt-1 text-xs leading-5 text-slate-400">{value}</div></div>)}</div>{macro && <MacroEvidence state={state} structure={structure}/>}<EvidenceList title="BLOCKERS" values={blockers}/><EvidenceList title="NEXT" values={next}/><div className="flex items-center justify-between border-t border-white/7 pt-3 text-[10px] text-slate-600"><span>Evaluated {age(setup.last_evaluated_at)}</span><span className="font-mono text-cyan-300/60">MANUAL EXECUTION ONLY</span></div></div></Panel>;
+  const reaction = macro ? setup.status === "RETEST_PENDING" ? "Retest pending" : setup.status === "TRIGGER_ARMED" ? "At retest proximity — lower-timeframe trigger evaluation armed" : "Not applicable before retest" : evidenceSummary(state.reaction);
+  const triggerSummary = setup.status !== "TRIGGER_ARMED" ? next[0] ? humanReason(next[0]) : "Not armed — higher-timeframe prerequisites still in progress" : !current ? "Armed — awaiting current trigger context" : !current.eligible ? `Trigger context blocked: ${humanReason(current.blocking_reason ?? "UNKNOWN")}` : current.attempt ? humanReason(current.attempt.state) : "Armed — awaiting first completed lower-timeframe evaluation";
+  const data = text(state.data_status) ?? "INDETERMINATE";
+  return <Panel title={`${setup.symbol} · ${compactSetup(setup.setup_type)}`} kicker={`VERSION ${setup.version}`}><div className="space-y-4"><div className="grid gap-2 sm:grid-cols-2">{[["CONTEXT", context], ["LOCATION", location], ["REACTION", reaction], ["TRIGGER", triggerSummary], ["DATA", data === "CONFIRMED" ? "DATA OK" : label(data)]].map(([name, value]) => <div key={name} className="rounded border border-white/7 bg-black/15 p-2.5"><div className="mono-label">{name}</div><div className="mt-1 text-xs leading-5 text-slate-400">{value}</div></div>)}</div>{macro && <MacroEvidence state={state} structure={structure}/>}<EvidenceList title="BLOCKERS" values={blockers}/><EvidenceList title="NEXT CONDITIONS" values={next}/>{setup.status === "TRIGGER_ARMED" && <TriggerEvidence current={current}/>}<div className="flex items-center justify-between border-t border-white/7 pt-3 text-[10px] text-slate-600"><span>Evaluated {age(setup.last_evaluated_at)}</span><span className="font-mono text-cyan-300/60">MANUAL EXECUTION ONLY</span></div></div></Panel>;
 }
 
 function evidenceSummary(value: unknown): string { const item = record(value); if (!item || !Object.keys(item).length) return "Missing"; const status = text(item.status); const detail = text(item.label) ?? text(item.reason) ?? text(item.zone); return [status ? label(status) : "Evidence recorded", detail].filter(Boolean).join(" · "); }
 function humanReason(value: string): string { return label(value); }
 function EvidenceList({ title, values }: { title: string; values: string[] }) { return <div><div className="mono-label mb-2">{title}</div>{values.length ? <div className="flex flex-wrap gap-2">{values.map((value) => <span key={value} title={value} className="rounded border border-white/8 bg-white/[.025] px-2 py-1.5 text-xs text-slate-300">{humanReason(value)} <span className="ml-1 font-mono text-[8px] text-slate-600">{value}</span></span>)}</div> : <div className="text-xs text-slate-600">None recorded</div>}</div>; }
+function TriggerEvidence({ current }: { current: TriggerCurrent | null }) {
+  if (!current) return <div className="rounded border border-white/8 bg-black/15 p-3 text-xs text-slate-500">Armed — awaiting current trigger context.</div>;
+  if (!current.eligible) return <div className="rounded border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-200/80">Trigger context blocked: {humanReason(current.blocking_reason ?? "UNKNOWN")}</div>;
+  if (!current.attempt) return <div className="rounded border border-cyan-400/15 bg-cyan-400/[.03] p-3 text-xs text-cyan-100/70">Armed — awaiting first completed lower-timeframe evaluation.</div>;
+  const attempt = current.attempt; const result = attempt.result;
+  const pattern = result.pattern === "DEVIATION_RECLAIM" ? "Deviation / Reclaim" : "Retest / Hold";
+  const acceptance = result.local_15m_acceptance === null ? "Missing" : result.local_15m_acceptance ? "Supportive" : "Not supportive";
+  const reaction = result.reaction_state ? `${humanReason(result.reaction_state)} · ${result.reaction_supportive === null ? "Unknown" : result.reaction_supportive ? "Supportive" : "Not supportive"}` : "Missing";
+  return <div className="space-y-3 rounded border border-cyan-400/15 bg-cyan-400/[.025] p-3"><div className="flex items-center justify-between"><div><div className="mono-label">LOWER-TIMEFRAME TRIGGER</div><div className="mt-1 text-xs text-slate-500">Current arm · {age(current.armed_at)}</div></div><span className={`rounded-sm border px-2 py-1 font-mono text-[9px] font-semibold ${triggerTone(attempt.state)}`}>{attempt.state}</span></div>{attempt.state === "CONFIRMED" && <div className="rounded border border-emerald-400/20 bg-emerald-400/5 p-2 text-xs text-emerald-100"><div>Lower-timeframe trigger confirmed</div><div className="mt-1 text-emerald-200/60">Manual execution only — confirmation is evidence, not permission.</div></div>}{attempt.state === "FAILED" && <div className="rounded border border-red-400/20 bg-red-400/5 p-2 text-xs text-red-100"><div>Current lower-timeframe trigger attempt failed.</div><div className="mt-1 text-red-200/60">Higher-timeframe setup remains governed by the scanner lifecycle.</div></div>}{attempt.state === "INDETERMINATE" && <div className="text-xs text-slate-400">Waiting for sufficient completed lower-timeframe data.</div>}<div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Fact name="STATE" value={humanReason(attempt.state)}/><Fact name="PATTERN" value={pattern}/><Fact name="REFERENCE" value={`${formatNumber(attempt.reference_level)} · ${humanReason(attempt.reference_source)}`}/><Fact name="ARMED" value={age(attempt.armed_at)}/><Fact name="5M ANCHOR" value={result.anchor_bar_end_ms ? `Present · H ${formatNumber(result.anchor_high)} · L ${formatNumber(result.anchor_low)} · C ${formatNumber(result.anchor_close)}` : "Missing"}/><Fact name="5M ROTATION" value={result.confirmation_bar_end_ms ? `Present · C ${formatNumber(result.confirmation_close)}` : "Missing"}/><Fact name="15M ACCEPTANCE" value={acceptance}/><Fact name="REACTION" value={reaction}/><Fact name="LAST EVALUATED" value={age(attempt.last_evaluated_at)}/><Fact name="VERSION" value={`v${attempt.version}`}/></div><TriggerEvidenceLists result={result}/></div>;
+}
+function TriggerEvidenceLists({ result }: { result: TriggerResult }) { return <div className="space-y-3 border-t border-white/7 pt-3"><EvidenceList title="EVIDENCE PRESENT" values={result.evidence_present}/><EvidenceList title="EVIDENCE MISSING" values={result.evidence_missing}/><EvidenceList title="TRIGGER BLOCKERS" values={result.blocking_reasons}/><EvidenceList title="TRIGGER NEXT" values={result.next_conditions}/></div>; }
 function MacroEvidence({ state, structure }: { state: ScannerSetupState; structure: Record<string, unknown> | null }) { const completed = numberValue(state.qualifying_close_count ?? state.accepted_close_count); const required = numberValue(state.required_acceptance_bars ?? state.acceptance_bars); return <div className="grid grid-cols-2 gap-3 rounded border border-cyan-400/10 bg-cyan-400/[.025] p-3 sm:grid-cols-4"><Fact name="BREAKOUT LEVEL" value={formatNumber(structure?.breakout_level)}/><Fact name="DISTANCE" value={formatNumber(state.distance_bps, " bps")}/><Fact name="ACCEPTANCE" value={completed === null || required === null ? "—" : `${completed} / ${required} completed 1H closes`}/><Fact name="ACCEPTED REFERENCE" value={state.accepted_at ? `${formatNumber(state.accepted_breakout_level)} · ${age(state.accepted_at)}` : "—"}/></div>; }
 function Fact({ name, value }: { name: string; value: string }) { return <div><div className="mono-label">{name}</div><div className="mt-1 font-mono text-xs text-slate-300">{value}</div></div>; }
 
@@ -107,6 +156,15 @@ function TransitionHistory({ setup }: { setup: ScannerSetup | null }) {
 }
 function TransitionRow({ transition }: { transition: ScannerTransition }) { return <details className="group rounded border border-white/7 bg-black/10"><summary className="flex cursor-pointer list-none items-center gap-2 p-3"><ChevronDown size={13} className="text-slate-600 transition group-open:rotate-180"/><span className="text-xs text-slate-500">{new Date(transition.timestamp).toLocaleString()}</span><span className="ml-auto font-mono text-[10px] text-slate-400">{transition.from_status ?? "NEW"} → {transition.to_status}</span><span className="font-mono text-[9px] text-slate-600">v{transition.version}</span></summary><div className="grid gap-2 border-t border-white/7 p-3 sm:grid-cols-2"><Snapshot title="BEFORE" value={transition.state_before}/><Snapshot title="AFTER" value={transition.state_after}/></div></details>; }
 function Snapshot({ title, value }: { title: string; value: ScannerSetupState }) { return <div><div className="mono-label mb-1">{title} EVIDENCE</div><pre className="max-h-52 overflow-auto rounded bg-black/25 p-2 font-mono text-[9px] leading-4 text-slate-500">{JSON.stringify(value, null, 2)}</pre></div>; }
+
+function TriggerTransitionHistory({ trigger: current }: { trigger: TriggerCurrent | null }) {
+  const attemptId = current?.attempt?.id ?? null;
+  const loader = useCallback(() => attemptId ? api.getTriggerTransitions({ trigger_attempt_id: attemptId, limit: 100 }) : Promise.resolve([]), [attemptId]);
+  const transitions = usePolling(loader, 20000);
+  if (!current?.attempt) return null;
+  return <Panel title="LTF trigger history" kicker="CURRENT ARM · NEWEST FIRST">{transitions.error && <div className="mb-3"><ErrorState message={transitions.error}/></div>}{transitions.data?.length ? <div className="space-y-2">{transitions.data.map((item) => <TriggerTransitionRow key={item.id} transition={item}/>)}</div> : <EmptyState title={`Initial observed state: ${humanReason(current.attempt.state)}`} detail="Version 1 is the first persisted observation and does not create a synthetic transition."/>}</Panel>;
+}
+function TriggerTransitionRow({ transition }: { transition: TriggerTransition }) { return <div className="flex items-center gap-2 rounded border border-white/7 bg-black/10 p-3"><span className="text-xs text-slate-500">{new Date(transition.timestamp).toLocaleString()}</span><span className="ml-auto font-mono text-[10px] text-slate-400">{transition.from_state ?? "NEW"} → {transition.to_state}</span><span className="font-mono text-[9px] text-slate-600">v{transition.version}</span></div>; }
 
 function WatchlistPanel({ items, onRefresh }: { items: ScannerWatchlistItem[]; onRefresh: () => Promise<void> }) {
   const [form, setForm] = useState<ScannerWatchlistInput>({ symbol: "", enabled: true, enabled_playbooks: PLAYBOOKS.map(([value]) => value), approach_tolerance_bps: 50, retest_tolerance_bps: 25, acceptance_bars: 2 });

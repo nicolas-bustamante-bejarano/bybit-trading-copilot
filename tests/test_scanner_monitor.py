@@ -116,6 +116,30 @@ async def test_empty_watchlist_completes_without_advancing_last_success(sessions
 
 
 @pytest.mark.asyncio
+async def test_safe_symbol_reevaluation_uses_enabled_canonical_watchlist(sessions):
+    async with sessions() as session:
+        session.add_all([watchlist("BTCUSDT"), watchlist("ETHUSDT", enabled=False)])
+        await session.commit()
+    calls = []
+
+    async def builder(symbol, evaluated_at):
+        calls.append(("snapshot", symbol))
+        return snapshot(symbol)
+
+    async def composer(session, item, shared_snapshot):
+        calls.append(("compose", item.symbol))
+        return SymbolEvaluationOutcome(results=[result(item.symbol)])
+
+    item = monitor(sessions, builder, composer)
+    outcome = await item.reevaluate_symbol("btcusdt")
+
+    assert len(outcome.results) == 1
+    assert calls == [("snapshot", "BTCUSDT"), ("compose", "BTCUSDT")]
+    with pytest.raises(ValueError, match="enabled scanner watchlist"):
+        await item.reevaluate_symbol("ETHUSDT")
+
+
+@pytest.mark.asyncio
 async def test_cycle_skips_disabled_rows_and_isolates_failed_symbol(sessions):
     async with sessions() as session:
         session.add_all([watchlist("BTCUSDT"), watchlist("ETHUSDT"), watchlist("SOLUSDT", enabled=False)])
