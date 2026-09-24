@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from trading_copilot.api.journal import router as journal_router
 from trading_copilot.api.scanner import router as scanner_router
+from trading_copilot.api.scanner import (
+    set_reevaluate_provider as set_scanner_reevaluate_provider,
+)
 from trading_copilot.api.scanner import set_status_provider as set_scanner_status_provider
 from trading_copilot.api.state_changes import router as state_changes_router
 from trading_copilot.api.state_changes import set_status_provider
@@ -112,6 +115,9 @@ async def lifespan(_: FastAPI):
         compose_symbol=evaluate_symbol,
     )
     set_scanner_status_provider(setup_scanner_monitor.status)
+    set_scanner_reevaluate_provider(
+        getattr(setup_scanner_monitor, "reevaluate_symbol", None)
+    )
     if settings.setup_scanner_enabled:
         setup_scanner_monitor_task = asyncio.create_task(setup_scanner_monitor.run())
     trigger_monitor = TriggerMonitor(

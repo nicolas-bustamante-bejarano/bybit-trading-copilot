@@ -1,4 +1,4 @@
-import type { Account, AccountStatus, Chart, ChartStructure, Coach, ExecutionEvent, Health, LiveStatus, Portfolio, ScannerMonitorStatus, ScannerSetup, ScannerTransition, ScannerWatchlistInput, ScannerWatchlistItem, ScannerWatchlistPatch, Sizing, Snapshot, StateChange, StateChangeMonitorStatus, TradePlan, TradeReview, TriggerAttempt, TriggerCurrent, TriggerMonitorStatus, TriggerTransition } from "./types";
+import type { Account, AccountStatus, Chart, ChartStructure, Coach, ExecutionEvent, FibDefinition, Health, LiveStatus, Portfolio, RangeDefinition, ScannerMonitorStatus, ScannerSetup, ScannerTransition, ScannerWatchlistInput, ScannerWatchlistItem, ScannerWatchlistPatch, Sizing, Snapshot, StateChange, StateChangeMonitorStatus, TradePlan, TradeReview, TriggerAttempt, TriggerCurrent, TriggerMonitorStatus, TriggerTransition } from "./types";
 
 const API_BASE = "/backend";
 
@@ -46,12 +46,15 @@ export const api = {
   deleteChartStructure: (id: string) => mutate<void>(`/chart-structures/${encodeURIComponent(id)}`, "DELETE"),
   createPlan: (body: Record<string, unknown>) => mutate<TradePlan>("/trade-plans", "POST", body),
   patchPlan: (id: string, body: Record<string, unknown>) => mutate<TradePlan>(`/trade-plans/${encodeURIComponent(id)}`, "PATCH", body),
-  getFibs: (id: string) => get<Record<string, unknown>[]>(`/trade-plans/${encodeURIComponent(id)}/fib-definitions`),
-  putFib: (id: string, body: Record<string, unknown>) => mutate<Record<string, unknown>>(`/trade-plans/${encodeURIComponent(id)}/fib-definition`, "PUT", body),
-  getRanges: (id: string) => get<Record<string, unknown>[]>(`/trade-plans/${encodeURIComponent(id)}/range-definitions`),
-  putRange: (id: string, body: Record<string, unknown>) => mutate<Record<string, unknown>>(`/trade-plans/${encodeURIComponent(id)}/range-definition`, "PUT", body),
+  getFibs: (id: string) => get<FibDefinition[]>(`/trade-plans/${encodeURIComponent(id)}/fib-definitions`),
+  putFib: (id: string, body: Record<string, unknown>) => mutate<FibDefinition>(`/trade-plans/${encodeURIComponent(id)}/fib-definition`, "PUT", body),
+  deleteFib: (id: string) => mutate<void>(`/trade-plans/${encodeURIComponent(id)}/fib-definition`, "DELETE"),
+  getRanges: (id: string) => get<RangeDefinition[]>(`/trade-plans/${encodeURIComponent(id)}/range-definitions`),
+  putRange: (id: string, body: Record<string, unknown>) => mutate<RangeDefinition>(`/trade-plans/${encodeURIComponent(id)}/range-definition`, "PUT", body),
+  deleteRange: (id: string) => mutate<void>(`/trade-plans/${encodeURIComponent(id)}/range-definition`, "DELETE"),
   getSizing: (body: Record<string, unknown>) => mutate<Sizing>("/workspace/sizing", "POST", body),
   getScannerStatus: () => get<ScannerMonitorStatus>("/scanner/status"),
+  reevaluateScannerSymbol: (symbol: string) => mutate<{ symbol: string; setup_count: number; failed_setups: Record<string, string> }>(`/scanner/reevaluate/${encodeURIComponent(symbol)}`, "POST"),
   getScannerWatchlist: () => get<ScannerWatchlistItem[]>("/scanner/watchlist"),
   createScannerWatchlistItem: (body: ScannerWatchlistInput) => mutate<ScannerWatchlistItem>("/scanner/watchlist", "POST", body),
   patchScannerWatchlistItem: (symbol: string, body: ScannerWatchlistPatch) => mutate<ScannerWatchlistItem>(`/scanner/watchlist/${encodeURIComponent(symbol)}`, "PATCH", body),

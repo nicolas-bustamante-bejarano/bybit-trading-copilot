@@ -11,6 +11,7 @@ const numberValue = (value: unknown): number | null => {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : null;
 };
+const STRUCTURAL_BLOCKERS = new Set(["STRUCTURE_REQUIRED", "AMBIGUOUS_STRUCTURE", "INCOMPATIBLE_LINKED_PLAN"]);
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const timestamp = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return value > 10_000_000_000 ? Math.floor(value / 1000) : Math.floor(value);
@@ -31,11 +32,18 @@ export function defaultScannerTimeframe(setupType: ScannerSetup["setup_type"]): 
 }
 
 export function candidateCounts(setups: ScannerSetup[]) {
+  const needsStructure = setups.filter((setup) => hasStructuralBlocker(setup)).length;
   return {
     tracked: setups.length,
-    active: setups.filter((setup) => setup.status !== "IGNORE").length,
+    active: setups.filter((setup) => setup.status !== "IGNORE" && !hasStructuralBlocker(setup)).length,
+    needsStructure,
     armed: setups.filter((setup) => setup.status === "TRIGGER_ARMED").length,
   };
+}
+
+export function hasStructuralBlocker(setup: ScannerSetup): boolean {
+  const blockers = Array.isArray(setup.state.blocking_reasons) ? setup.state.blocking_reasons : [];
+  return blockers.some((blocker) => typeof blocker === "string" && STRUCTURAL_BLOCKERS.has(blocker));
 }
 
 export function filterScannerCandidates(setups: ScannerSetup[], showIgnored: boolean): ScannerSetup[] {

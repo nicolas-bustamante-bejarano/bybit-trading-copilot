@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PREVIEW_ACCOUNT, PREVIEW_PORTFOLIO, privateSyncLabel } from "../src/lib/dashboard-preview.ts";
-import { candidateCounts, defaultScannerTimeframe, exactCurrentTrigger, extractScannerOverlays, filterScannerCandidates } from "../src/lib/scanner-visuals.ts";
+import { buildStructureDraft } from "../src/lib/scanner-authoring.ts";
+import { candidateCounts, defaultScannerTimeframe, exactCurrentTrigger, extractScannerOverlays, filterScannerCandidates, hasStructuralBlocker } from "../src/lib/scanner-visuals.ts";
 
 function setup(id, setupType, status, structure = {}) {
   return { id, symbol: "BTCUSDT", setup_type: setupType, status, state: { structure }, version: 1, trade_plan_id: null, last_evaluated_at: null, updated_at: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" };
@@ -15,7 +16,13 @@ test("ignored candidates stay persisted but are hidden by default", () => {
 
 test("tracked active and armed counts use all persisted directional setups", () => {
   const rows = [setup("a", "RANGE_LONG", "WATCH"), setup("b", "RANGE_SHORT", "IGNORE"), setup("c", "TREND_PULLBACK_LONG", "TRIGGER_ARMED")];
-  assert.deepEqual(candidateCounts(rows), { tracked: 3, active: 2, armed: 1 });
+  assert.deepEqual(candidateCounts(rows), { tracked: 3, active: 2, needsStructure: 0, armed: 1 });
+});
+
+test("structural blockers are presented as needs structure and excluded from active", () => {
+  const blocked = setup("blocked", "RANGE_LONG", "WATCH"); blocked.state.blocking_reasons = ["STRUCTURE_REQUIRED"];
+  assert.equal(hasStructuralBlocker(blocked), true);
+  assert.deepEqual(candidateCounts([blocked]), { tracked: 1, active: 0, needsStructure: 1, armed: 0 });
 });
 
 test("setup-aware timeframes default macro to 4H and plan structures to 1H", () => {
@@ -59,4 +66,21 @@ test("disabled private sync has explicit preview data instead of an API failure"
   assert.equal(privateSyncLabel({ enabled: false, credentials_configured: false, mode: "read_only" }), "PREVIEW / READ ONLY");
   assert.deepEqual(PREVIEW_ACCOUNT.positions, []);
   assert.equal(PREVIEW_PORTFOLIO.provenance.account, "private sync disabled — preview only");
+});
+
+test("chart picks build canonical Macro, Range, and Fib API payloads", () => {
+  const macro = setup("macro", "MACRO_BREAKOUT_LONG", "WATCH");
+  assert.deepEqual(buildStructureDraft(macro, "MACRO_RESISTANCE", [{ time: 100, price: 120 }], "4h"), { target: "CHART_STRUCTURE", body: { symbol: "BTCUSDT", timeframe: "4h", structure_type: "HORIZONTAL_ZONE", label: "Scanner resistance", lower_price: 120, upper_price: 120, active: true } });
+  const range = setup("range", "RANGE_LONG", "WATCH"); range.trade_plan_id = "plan-range";
+  assert.deepEqual(buildStructureDraft(range, "RANGE", [{ time: 100, price: 90 }, { time: 200, price: 110 }], "1h"), { target: "RANGE", planId: "plan-range", body: { range_low: 90, range_high: 110 } });
+  const trend = setup("trend", "TREND_PULLBACK_SHORT", "WATCH"); trend.trade_plan_id = "plan-trend";
+  assert.deepEqual(buildStructureDraft(trend, "FIB", [{ time: 100, price: 80 }, { time: 200, price: 120 }], "1h"), { target: "FIB", planId: "plan-trend", body: { direction: "SHORT", swing_low: 80, swing_high: 120 } });
+});
+
+test("malformed chart interactions never produce persistence payloads", () => {
+  const macro = setup("macro", "MACRO_BREAKOUT_LONG", "WATCH");
+  assert.throws(() => buildStructureDraft(macro, "MACRO_TRENDLINE", [{ time: 100, price: 90 }, { time: 100, price: 110 }], "4h"), /distinct timestamps/);
+  const range = setup("range", "RANGE_LONG", "WATCH"); range.trade_plan_id = "plan-range";
+  assert.throws(() => buildStructureDraft(range, "RANGE", [{ time: 100, price: 110 }, { time: 200, price: 90 }], "1h"), /Range high/);
+  assert.throws(() => buildStructureDraft(macro, "MACRO_SUPPORT", [{ time: 100, price: Number.NaN }], "4h"), /valid chart point/);
 });

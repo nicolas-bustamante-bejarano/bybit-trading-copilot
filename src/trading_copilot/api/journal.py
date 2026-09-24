@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -369,6 +369,19 @@ async def put_fib(plan_id: str, body: FibDefinitionInput, session: AsyncSession 
     return dump(row) | {"levels": fib_levels(row)}
 
 
+@router.delete("/{plan_id}/fib-definition", status_code=204)
+async def delete_fib(plan_id: str, session: AsyncSession = Depends(get_session)) -> Response:
+    await require_plan(session, plan_id)
+    row = await session.scalar(
+        select(FibDefinitionRow).where(FibDefinitionRow.trade_plan_id == plan_id)
+    )
+    if row is None:
+        raise HTTPException(404, "Fib definition not found")
+    await session.delete(row)
+    await session.commit()
+    return Response(status_code=204)
+
+
 @router.get("/{plan_id}/range-definitions")
 async def list_ranges(plan_id: str, session: AsyncSession = Depends(get_session)):
     await require_plan(session, plan_id)
@@ -389,3 +402,18 @@ async def put_range(plan_id: str, body: RangeDefinitionInput, session: AsyncSess
     await session.commit()
     await session.refresh(row)
     return dump(row)
+
+
+@router.delete("/{plan_id}/range-definition", status_code=204)
+async def delete_range(
+    plan_id: str, session: AsyncSession = Depends(get_session)
+) -> Response:
+    await require_plan(session, plan_id)
+    row = await session.scalar(
+        select(RangeDefinitionRow).where(RangeDefinitionRow.trade_plan_id == plan_id)
+    )
+    if row is None:
+        raise HTTPException(404, "Range definition not found")
+    await session.delete(row)
+    await session.commit()
+    return Response(status_code=204)

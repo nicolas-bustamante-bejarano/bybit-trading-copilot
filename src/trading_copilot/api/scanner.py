@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
@@ -23,14 +23,23 @@ from trading_copilot.persistence.models import (
     ScannerWatchlistRow,
     WatchedSetupRow,
 )
+from trading_copilot.services.scanner_composer import SymbolEvaluationOutcome
 
 router = APIRouter(prefix="/scanner", tags=["scanner"])
 _status_provider: Callable[[], object] | None = None
+_reevaluate_provider: Callable[[str], Awaitable[SymbolEvaluationOutcome]] | None = None
 
 
 def set_status_provider(provider: Callable[[], object] | None) -> None:
     global _status_provider
     _status_provider = provider
+
+
+def set_reevaluate_provider(
+    provider: Callable[[str], Awaitable[SymbolEvaluationOutcome]] | None,
+) -> None:
+    global _reevaluate_provider
+    _reevaluate_provider = provider
 
 
 @router.get("/status", response_model=ScannerMonitorStatusResponse)
@@ -42,6 +51,21 @@ def scanner_status() -> ScannerMonitorStatusResponse:
             interval_seconds=30,
         )
     return ScannerMonitorStatusResponse.model_validate(_status_provider(), from_attributes=True)
+
+
+@router.post("/reevaluate/{symbol}")
+async def reevaluate_symbol(symbol: str) -> dict:
+    if _reevaluate_provider is None:
+        raise HTTPException(503, "Scanner reevaluation is unavailable")
+    try:
+        outcome = await _reevaluate_provider(symbol.upper())
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {
+        "symbol": symbol.upper(),
+        "setup_count": len(outcome.results),
+        "failed_setups": outcome.failed_setups,
+    }
 
 
 @router.get("/watchlist", response_model=list[ScannerWatchlistResponse])

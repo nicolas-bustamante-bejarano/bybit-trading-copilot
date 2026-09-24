@@ -56,6 +56,8 @@ export interface StateChangeMonitorStatus {
 export interface Candle { time: number; open: number; high: number; low: number; close: number; volume: number; ema12: number; ema21: number }
 export interface Chart { symbol: string; timeframe: string; candles: Candle[] }
 export interface ChartStructure { id: string; symbol: string; timeframe: string; structure_type: "HORIZONTAL_ZONE" | "TRENDLINE"; label: string | null; lower_price: string | null; upper_price: string | null; anchor_one_time: number | null; anchor_one_price: string | null; anchor_two_time: number | null; anchor_two_price: string | null; active: boolean }
+export interface FibDefinition { id: string; trade_plan_id: string; symbol: string; direction: "LONG" | "SHORT"; swing_low: number; swing_high: number; levels: Record<string, number> }
+export interface RangeDefinition { id: string; trade_plan_id: string; symbol: string; range_low: number; range_high: number }
 export interface Sizing { maximum_quantity: string; maximum_notional: string; permitted_risk_usdt: string; risk_per_unit_usdt: string; estimated_margin_usdt: string | null; minimum_leverage_for_margin_fit: string | null; group_risk_used_usdt: string; group_risk_remaining_usdt: string; risk_budget_usdt: string; stop_distance: string; margin_percent_equity: string | null; liquidation_status: string; stages: { state: string; allocation?: string; quantity?: string; notional?: string; stage_risk_usdt?: string; cumulative_quantity?: string; cumulative_risk_usdt?: string; remaining_unlockable_risk_usdt?: string; allowed: boolean; status: string; reasons: string[] }[] }
 
 export type ScannerSetupType = "TREND_PULLBACK_LONG" | "TREND_PULLBACK_SHORT" | "RANGE_LONG" | "RANGE_SHORT" | "MACRO_BREAKOUT_LONG" | "MACRO_BREAKOUT_SHORT";
