@@ -158,8 +158,7 @@ def _evaluate_macro(
         pinned_structure_id=pinned_structure_id,
     )
     if resolution.reason:
-        if accepted_reference is not None:
-            raise RuntimeError("ACCEPTED_STRUCTURE_UNAVAILABLE")
+        stale_accepted_reference = accepted_reference is not None
         result = ScannerResult(
             symbol=snapshot.symbol,
             setup_type=watched.setup_type,
@@ -167,7 +166,9 @@ def _evaluate_macro(
             status=ScannerStatus.WATCH,
             price=snapshot.current_price,
             evaluated_at=snapshot.evaluated_at,
-            blocking_reasons=[resolution.reason],
+            blocking_reasons=[
+                "STRUCTURE_REQUIRED" if stale_accepted_reference else resolution.reason
+            ],
             next_conditions=["define actionable breakout structure"],
             data_status=snapshot.data_status,
             linked_trade_plan_id=watched.trade_plan_id,
@@ -183,6 +184,8 @@ def _evaluate_macro(
             qualifying_close_count=0,
             required_acceptance_bars=watchlist_item.acceptance_bars,
         )
+        if stale_accepted_reference:
+            state["reconciliation_reason"] = "STALE_STRUCTURE_REFERENCE_RECONCILED"
         return result, state
 
     lifecycle_level = (

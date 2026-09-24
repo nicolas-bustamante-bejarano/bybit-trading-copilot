@@ -94,6 +94,23 @@ test("reset response state removes stale canonical overlays", () => {
   assert.deepEqual(overlay.lines, []);
 });
 
+test("missing canonical macro source suppresses stale setup and trigger overlays", () => {
+  const row = setup("stale", "MACRO_BREAKOUT_LONG", "TRIGGER_ARMED", { structure_id: "deleted-structure", type: "HORIZONTAL_ZONE", lower_price: 100, upper_price: 100, breakout_level: 100, approach_zone: { lower: 99, upper: 101 } });
+  row.state.accepted_structure_id = "deleted-structure";
+  row.state.accepted_breakout_level = 100;
+  const current = { watched_setup_id: "stale", scanner_status: "TRIGGER_ARMED", attempt: { result: { reference_level: 100, state: "CONFIRMED", pattern: "DEVIATION_RECLAIM", anchor_bar_end_ms: 1000, confirmation_bar_end_ms: 1000 } } };
+  const overlay = extractScannerOverlays(row, current, [{ to_status: "TRIGGER_ARMED", timestamp: "2026-01-01T00:00:00Z" }], new Set());
+  assert.equal(overlay.staleCanonicalReference, true);
+  assert.deepEqual(overlay.lines, []);
+  assert.deepEqual(overlay.zones, []);
+  assert.deepEqual(overlay.markers, []);
+});
+
+test("canonical macro source permits persisted evidence rendering", () => {
+  const row = setup("current", "MACRO_BREAKOUT_LONG", "BREAKOUT_ACCEPTED", { structure_id: "current-structure", breakout_level: 100 });
+  assert.equal(extractScannerOverlays(row, null, [], new Set(["current-structure"])).staleCanonicalReference, false);
+});
+
 test("disabled private sync has explicit preview data instead of an API failure", () => {
   assert.equal(privateSyncLabel({ enabled: false, credentials_configured: false, mode: "read_only" }), "PREVIEW / READ ONLY");
   assert.deepEqual(PREVIEW_ACCOUNT.positions, []);

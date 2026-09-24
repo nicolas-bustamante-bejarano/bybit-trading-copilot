@@ -26,7 +26,8 @@ export function ScannerEvidenceChart({ setup, trigger, timeframe, onTimeframeCha
     const [fibs, ranges] = await Promise.all([api.getFibs(planId), api.getRanges(planId)]);
     return { fib: fibs[0] ?? null, range: ranges[0] ?? null };
   }, [planId]), 15000);
-  const overlays = useMemo(() => setup ? extractScannerOverlays(setup, trigger, transitions.data ?? []) : null, [setup, trigger, transitions.data]);
+  const canonicalStructureIds = useMemo(() => structures.data === null ? undefined : new Set(structures.data.map((row) => row.id)), [structures.data]);
+  const overlays = useMemo(() => setup ? extractScannerOverlays(setup, trigger, transitions.data ?? [], canonicalStructureIds) : null, [setup, trigger, transitions.data, canonicalStructureIds]);
   const [draftKind, setDraftKind] = useState<StructureDraftKind | null>(null);
   const [draftSetupId, setDraftSetupId] = useState<string | null>(null);
   const [picks, setPicks] = useState<ChartPick[]>([]);
@@ -111,7 +112,7 @@ export function ScannerEvidenceChart({ setup, trigger, timeframe, onTimeframeCha
       fib={definitions.data?.fib ?? null} range={definitions.data?.range ?? null}
       onStart={start} onCancel={cancel} onUndo={undo} onSave={() => void save()} onDelete={() => void remove()}
     />}
-    {!setup ? <EmptyState title="No candidate selected" detail="Select a candidate to load its canonical structure evidence."/> : chart.error ? <div className="rounded border border-red-400/15 bg-red-400/5 p-3 text-xs text-red-200">Chart unavailable: {chart.error}</div> : <><ScannerChartCanvas chart={chart.data} overlays={overlays} showEma={setup.setup_type.startsWith("TREND_PULLBACK")} sideLong={setup.setup_type.endsWith("LONG")} draftKind={activeDraftKind} picks={activePicks} onPick={activeDraftKind && !pending ? pick : null}/>{overlays && <OverlayLegend overlays={overlays}/>} {overlays?.missing && <div className="mt-3 rounded border border-amber-400/15 bg-amber-400/5 p-3 text-xs text-amber-200">No actionable structure defined. No inferred level is drawn.</div>}</>}
+    {!setup ? <EmptyState title="No candidate selected" detail="Select a candidate to load its canonical structure evidence."/> : chart.error ? <div className="rounded border border-red-400/15 bg-red-400/5 p-3 text-xs text-red-200">Chart unavailable: {chart.error}</div> : <><ScannerChartCanvas chart={chart.data} overlays={overlays} showEma={setup.setup_type.startsWith("TREND_PULLBACK")} sideLong={setup.setup_type.endsWith("LONG")} draftKind={activeDraftKind} picks={activePicks} onPick={activeDraftKind && !pending ? pick : null}/>{overlays && <OverlayLegend overlays={overlays}/>} {overlays?.staleCanonicalReference ? <div className="mt-3 rounded border border-amber-400/15 bg-amber-400/5 p-3 text-xs text-amber-200">Canonical structure no longer exists. Waiting for Scanner reconciliation.</div> : overlays?.missing && <div className="mt-3 rounded border border-amber-400/15 bg-amber-400/5 p-3 text-xs text-amber-200">No actionable structure defined. No inferred level is drawn.</div>}</>}
   </Panel>;
 }
 

@@ -5,7 +5,7 @@ export type OverlayLine = { price: number; label: string; color: string };
 export type OverlayZone = { lower: number; upper: number; label: string; color: string };
 export type OverlayTrendline = { label: string; color: string; points: { time: number; value: number }[] };
 export type OverlayMarker = { time: number; position: "aboveBar" | "belowBar"; color: string; shape: "arrowUp" | "arrowDown" | "circle"; text: string };
-export type ScannerOverlays = { lines: OverlayLine[]; zones: OverlayZone[]; trendline: OverlayTrendline | null; markers: OverlayMarker[]; missing: boolean };
+export type ScannerOverlays = { lines: OverlayLine[]; zones: OverlayZone[]; trendline: OverlayTrendline | null; markers: OverlayMarker[]; missing: boolean; staleCanonicalReference: boolean };
 
 const PRICE_DEDUPE_BPS = 0.1;
 const linePriority = (label: string): number => {
@@ -102,7 +102,20 @@ export function exactCurrentTrigger(setup: ScannerSetup, current: TriggerCurrent
   return current;
 }
 
-export function extractScannerOverlays(setup: ScannerSetup, current: TriggerCurrent | null, transitions: ScannerTransition[] = []): ScannerOverlays {
+export function hasStaleCanonicalMacroReference(
+  setup: ScannerSetup,
+  canonicalStructureIds: ReadonlySet<string> | undefined,
+): boolean {
+  if (!setup.setup_type.startsWith("MACRO_BREAKOUT") || canonicalStructureIds === undefined) return false;
+  const structure = record(setup.state.structure);
+  const sourceId = typeof structure?.structure_id === "string" ? structure.structure_id : typeof setup.state.accepted_structure_id === "string" ? setup.state.accepted_structure_id : null;
+  return sourceId !== null && !canonicalStructureIds.has(sourceId);
+}
+
+export function extractScannerOverlays(setup: ScannerSetup, current: TriggerCurrent | null, transitions: ScannerTransition[] = [], canonicalStructureIds?: ReadonlySet<string>): ScannerOverlays {
+  if (hasStaleCanonicalMacroReference(setup, canonicalStructureIds)) {
+    return { lines: [], zones: [], trendline: null, markers: [], missing: true, staleCanonicalReference: true };
+  }
   const structure = record(setup.state.structure);
   const lines: OverlayLine[] = [];
   const zones: OverlayZone[] = [];
@@ -149,5 +162,6 @@ export function extractScannerOverlays(setup: ScannerSetup, current: TriggerCurr
     trendline,
     markers: clusterOverlayMarkers(markers),
     missing: normalizedLines.length === 0 && normalizedZones.length === 0 && trendline === null,
+    staleCanonicalReference: false,
   };
 }

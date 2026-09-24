@@ -510,3 +510,125 @@ async def test_replacement_structure_starts_fresh_and_monitor_stays_healthy(api_
         assert not any(key.startswith("accepted_") for key in watched.state)
         assert watched.state["structure"]["breakout_level"] == 105
         assert watched.state["structure"]["structure_id"] != "old-structure"
+
+
+@pytest.mark.asyncio
+async def test_preexisting_stale_armed_reference_reconciles_without_degrading_monitor(
+    api_client,
+):
+    client, sessions = api_client
+    async with sessions() as session:
+        watched = WatchedSetupRow(
+            id="stale-setup",
+            symbol="BTCUSDT",
+            setup_type="MACRO_BREAKOUT_LONG",
+            status="TRIGGER_ARMED",
+            state=accepted_state("already-deleted") | {"status": "TRIGGER_ARMED"},
+            version=9,
+            last_evaluated_at=NOW,
+        )
+        session.add_all(
+            [
+                watched,
+                ScannerWatchlistRow(
+                    id="stale-watchlist",
+                    symbol="BTCUSDT",
+                    enabled=True,
+                    enabled_playbooks=["MACRO_BREAKOUT_LONG"],
+                    approach_tolerance_bps=Decimal(50),
+                    retest_tolerance_bps=Decimal(25),
+                    acceptance_bars=2,
+                ),
+                TriggerAttemptRow(
+                    id="historical-attempt",
+                    watched_setup_id=watched.id,
+                    symbol="BTCUSDT",
+                    setup_type=watched.setup_type,
+                    arm_key="TRANSITION:stale",
+                    arm_source="ARM_TRANSITION",
+                    arm_transition_id="stale",
+                    armed_at=NOW,
+                    reference_level=Decimal(100),
+                    reference_source="MACRO_BREAKOUT_LEVEL",
+                    reference_metadata={"structure_id": "already-deleted"},
+                    retest_tolerance_bps=Decimal(25),
+                    failure_tolerance_bps=Decimal(25),
+                    state="WAITING",
+                    result={"state": "WAITING"},
+                    version=1,
+                    first_evaluated_at=NOW,
+                    last_evaluated_at=NOW,
+                ),
+            ]
+        )
+        await session.commit()
+
+    async def build_snapshot(symbol: str, evaluated_at: datetime):
+        timeframe = ScannerTimeframeSnapshot(
+            regime=Regime.UPTREND,
+            close=100,
+            ema12=100,
+            ema21=99,
+        )
+        return ScannerSymbolSnapshot(
+            symbol=symbol,
+            current_price=100,
+            evaluated_at=evaluated_at,
+            one_hour=timeframe,
+            four_hour=timeframe,
+            completed_1h_closes=(100,),
+            reaction_state=None,
+            data_status=ScannerDataStatus.CONFIRMED,
+        )
+
+    monitor = SetupScannerMonitor(
+        enabled=True,
+        interval_seconds=30,
+        concurrency=1,
+        sessions=sessions,
+        build_snapshot=build_snapshot,
+        compose_symbol=evaluate_symbol,
+    )
+    await monitor.run_cycle()
+
+    assert monitor.last_error is None
+    assert monitor.failed_symbols == []
+    assert monitor.evaluated_symbols == ["BTCUSDT"]
+    assert (await client.get("/trigger/current?watched_setup_id=stale-setup")).json() == []
+    async with sessions() as session:
+        watched = await session.get(WatchedSetupRow, "stale-setup")
+        assert watched.status == "WATCH"
+        assert watched.version == 10
+        assert watched.state["reconciliation_reason"] == (
+            "STALE_STRUCTURE_REFERENCE_RECONCILED"
+        )
+        assert not any(key.startswith("accepted_") for key in watched.state)
+        assert await session.get(TriggerAttemptRow, "historical-attempt") is not None
+        transition = await session.scalar(
+            select(ScannerTransitionRow).where(
+                ScannerTransitionRow.watched_setup_id == watched.id,
+                ScannerTransitionRow.version == 10,
+            )
+        )
+        assert transition.from_status == "TRIGGER_ARMED"
+        assert transition.to_status == "WATCH"
+        assert transition.state_after["reconciliation_reason"] == (
+            "STALE_STRUCTURE_REFERENCE_RECONCILED"
+        )
+
+    replacement = await client.post(
+        "/chart-structures",
+        json={
+            "symbol": "BTCUSDT",
+            "timeframe": "4h",
+            "structure_type": "HORIZONTAL_ZONE",
+            "lower_price": 105,
+            "upper_price": 105,
+        },
+    )
+    assert replacement.status_code == 201
+    await monitor.run_cycle()
+    async with sessions() as session:
+        watched = await session.get(WatchedSetupRow, "stale-setup")
+        assert watched.state["structure"]["structure_id"] == replacement.json()["id"]
+        assert "reconciliation_reason" not in watched.state
