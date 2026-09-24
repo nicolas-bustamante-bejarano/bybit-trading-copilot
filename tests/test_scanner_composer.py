@@ -517,6 +517,10 @@ async def test_stale_accepted_structure_reference_self_heals(
     assert outcome.results[0].blocking_reasons == ["STRUCTURE_REQUIRED"]
     assert reloaded.status == "WATCH"
     assert reloaded.state["reconciliation_reason"] == "STALE_STRUCTURE_REFERENCE_RECONCILED"
+    assert reloaded.state["lifecycle_reset_reason"] == (
+        "STALE_STRUCTURE_REFERENCE_RECONCILED"
+    )
+    assert reloaded.state["lifecycle_episode"] == 2
     assert not any(key.startswith("accepted_") for key in reloaded.state)
     assert reloaded.state["structure"]["structure_id"] is None
     assert reloaded.state["structure"]["breakout_level"] is None

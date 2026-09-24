@@ -27,12 +27,13 @@ async def persist_candidate(
         )
     )
     now = datetime.now(UTC)
+    persisted_state = dict(state)
     if row is None:
         row = WatchedSetupRow(
             symbol=symbol,
             setup_type=setup_type,
             status=status,
-            state=state,
+            state=persisted_state,
             trade_plan_id=trade_plan_id,
             version=1,
             last_evaluated_at=now,
@@ -42,11 +43,17 @@ async def persist_candidate(
         changed = row.status != status
         before = dict(row.state)
         previous = row.status
-        row.state = state
-        row.last_evaluated_at = now
         if changed:
             row.status = status
             row.version += 1
+        if "lifecycle_episode" not in persisted_state:
+            if persisted_state.get("lifecycle_reset_reason"):
+                persisted_state["lifecycle_episode"] = row.version
+            elif "lifecycle_episode" in before:
+                persisted_state["lifecycle_episode"] = before["lifecycle_episode"]
+        row.state = persisted_state
+        row.last_evaluated_at = now
+        if changed:
             session.add(
                 ScannerTransitionRow(
                     watched_setup_id=row.id,
@@ -56,7 +63,7 @@ async def persist_candidate(
                     to_status=status,
                     timestamp=now,
                     state_before=before,
-                    state_after=dict(state),
+                    state_after=dict(persisted_state),
                     version=row.version,
                 )
             )

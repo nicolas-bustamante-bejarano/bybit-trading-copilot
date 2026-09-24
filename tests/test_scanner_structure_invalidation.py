@@ -144,6 +144,8 @@ async def test_macro_delete_resets_accepted_lifecycle_with_audit_transition(
         assert watched.status == "WATCH"
         assert watched.version == 5
         assert watched.state["structure"] == {}
+        assert watched.state["lifecycle_episode"] == 5
+        assert watched.state["lifecycle_reset_reason"] == "CANONICAL_STRUCTURE_CHANGED"
         assert watched.state["blocking_reasons"][0] == "STRUCTURE_REQUIRED"
         assert not any(key.startswith("accepted_") for key in watched.state)
         transition = await session.scalar(
@@ -602,6 +604,10 @@ async def test_preexisting_stale_armed_reference_reconciles_without_degrading_mo
         assert watched.state["reconciliation_reason"] == (
             "STALE_STRUCTURE_REFERENCE_RECONCILED"
         )
+        assert watched.state["lifecycle_episode"] == 10
+        assert watched.state["lifecycle_reset_reason"] == (
+            "STALE_STRUCTURE_REFERENCE_RECONCILED"
+        )
         assert not any(key.startswith("accepted_") for key in watched.state)
         assert await session.get(TriggerAttemptRow, "historical-attempt") is not None
         transition = await session.scalar(
@@ -632,3 +638,5 @@ async def test_preexisting_stale_armed_reference_reconciles_without_degrading_mo
         watched = await session.get(WatchedSetupRow, "stale-setup")
         assert watched.state["structure"]["structure_id"] == replacement.json()["id"]
         assert "reconciliation_reason" not in watched.state
+        assert watched.state["lifecycle_episode"] == 10
+        assert "lifecycle_reset_reason" not in watched.state

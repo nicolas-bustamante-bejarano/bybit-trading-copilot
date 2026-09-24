@@ -51,8 +51,10 @@ async def _reset_rows(
         before = deepcopy(row.state) if isinstance(row.state, dict) else {}
         previous_status = row.status
         row.status = "WATCH"
-        row.state = _reset_state(row, now=now, reason=reason)
         row.version += 1
+        row.state = _reset_state(row, now=now, reason=reason)
+        row.state["lifecycle_episode"] = row.version
+        row.state["lifecycle_reset_reason"] = reason
         row.last_evaluated_at = now
         session.add(
             ScannerTransitionRow(

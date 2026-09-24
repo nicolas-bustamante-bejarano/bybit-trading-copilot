@@ -102,6 +102,29 @@ export function exactCurrentTrigger(setup: ScannerSetup, current: TriggerCurrent
   return current;
 }
 
+const resetReason = (state: unknown): string | null => {
+  const value = record(state);
+  if (typeof value?.lifecycle_reset_reason === "string") return value.lifecycle_reset_reason;
+  if (typeof value?.reconciliation_reason === "string") return value.reconciliation_reason;
+  const blockers = Array.isArray(value?.blocking_reasons) ? value.blocking_reasons : [];
+  return blockers.includes("CANONICAL_STRUCTURE_CHANGED") ? "CANONICAL_STRUCTURE_CHANGED" : null;
+};
+
+export function currentLifecycleTransitions(setup: ScannerSetup, transitions: ScannerTransition[]): ScannerTransition[] {
+  const episode = numberValue(setup.state.lifecycle_episode);
+  const resetVersions = transitions.filter((transition) => resetReason(transition.state_after) !== null).map((transition) => transition.version);
+  const latestReset = resetVersions.length > 0 ? Math.max(...resetVersions) : null;
+  if (episode !== null) {
+    return transitions.filter((transition) => {
+      const transitionEpisode = numberValue(transition.state_after.lifecycle_episode);
+      return transition.version > episode && (transitionEpisode === null || transitionEpisode === episode);
+    });
+  }
+  if (latestReset !== null) return transitions.filter((transition) => transition.version > latestReset);
+  if (resetReason(setup.state) !== null) return [];
+  return transitions;
+}
+
 export function hasStaleCanonicalMacroReference(
   setup: ScannerSetup,
   canonicalStructureIds: ReadonlySet<string> | undefined,
@@ -139,12 +162,12 @@ export function extractScannerOverlays(setup: ScannerSetup, current: TriggerCurr
     const approach = zone(structure.approach_zone, "APPROACH TOLERANCE", "rgba(245,158,11,.12)"); if (approach) zones.push(approach);
   }
 
-  transitions.forEach((transition) => {
+  currentLifecycleTransitions(setup, transitions).forEach((transition) => {
     if (!["BREAKOUT_ATTEMPT", "ACCEPTANCE_PENDING", "BREAKOUT_ACCEPTED", "RETEST_PENDING", "TRIGGER_ARMED"].includes(transition.to_status)) return;
     const time = timestamp(transition.timestamp); if (time === null) return;
     markers.push({ time, position: setup.setup_type.endsWith("LONG") ? "belowBar" : "aboveBar", color: "#22d3ee", shape: "circle", text: transition.to_status.replaceAll("_", " ") });
   });
-  const acceptedAt = timestamp(setup.state.accepted_at);
+  const acceptedAt = resetReason(setup.state) === null ? timestamp(setup.state.accepted_at) : null;
   if (acceptedAt !== null && !markers.some((marker) => marker.time === acceptedAt && marker.text === "BREAKOUT ACCEPTED")) markers.push({ time: acceptedAt, position: setup.setup_type.endsWith("LONG") ? "belowBar" : "aboveBar", color: "#34d399", shape: "circle", text: "BREAKOUT ACCEPTED" });
 
   const exact = exactCurrentTrigger(setup, current); const result = exact?.attempt?.result;

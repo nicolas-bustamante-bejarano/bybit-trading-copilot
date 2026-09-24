@@ -186,6 +186,7 @@ def _evaluate_macro(
         )
         if stale_accepted_reference:
             state["reconciliation_reason"] = "STALE_STRUCTURE_REFERENCE_RECONCILED"
+            state["lifecycle_reset_reason"] = "STALE_STRUCTURE_REFERENCE_RECONCILED"
         return result, state
 
     lifecycle_level = (

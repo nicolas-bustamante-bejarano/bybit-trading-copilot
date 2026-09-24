@@ -130,6 +130,52 @@ async def test_changed_status_writes_true_snapshots_and_increments_once(database
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_episode_starts_at_reset_version_and_is_carried_forward(database):
+    _, sessions = database
+    async with sessions() as session:
+        await persist_candidate(
+            session,
+            symbol="BTCUSDT",
+            setup_type="MACRO_BREAKOUT_LONG",
+            status="TRIGGER_ARMED",
+            state={"accepted_structure_id": "old"},
+        )
+        reset = await persist_candidate(
+            session,
+            symbol="BTCUSDT",
+            setup_type="MACRO_BREAKOUT_LONG",
+            status="WATCH",
+            state={
+                "blocking_reasons": ["STRUCTURE_REQUIRED"],
+                "lifecycle_reset_reason": "STALE_STRUCTURE_REFERENCE_RECONCILED",
+            },
+        )
+        reset_version = reset.version
+        current = await persist_candidate(
+            session,
+            symbol="BTCUSDT",
+            setup_type="MACRO_BREAKOUT_LONG",
+            status="BREAKOUT_ATTEMPT",
+            state={"structure": {"structure_id": "replacement"}},
+        )
+        transitions = list(
+            await session.scalars(
+                select(ScannerTransitionRow).order_by(ScannerTransitionRow.version)
+            )
+        )
+
+    assert reset_version == 2
+    assert transitions[0].state_after["lifecycle_episode"] == 2
+    assert transitions[0].state_after["lifecycle_reset_reason"] == (
+        "STALE_STRUCTURE_REFERENCE_RECONCILED"
+    )
+    assert current.version == 3
+    assert current.state["lifecycle_episode"] == 2
+    assert "lifecycle_reset_reason" not in current.state
+    assert transitions[1].state_after["lifecycle_episode"] == 2
+
+
+@pytest.mark.asyncio
 async def test_second_transition_creates_next_version(database):
     _, sessions = database
     async with sessions() as session:

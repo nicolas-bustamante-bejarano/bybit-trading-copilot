@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PREVIEW_ACCOUNT, PREVIEW_PORTFOLIO, privateSyncLabel } from "../src/lib/dashboard-preview.ts";
 import { addChartPick, buildStructureDraft, hydrateStructureDraft, undoChartPick } from "../src/lib/scanner-authoring.ts";
-import { candidateCounts, defaultScannerTimeframe, exactCurrentTrigger, extractScannerOverlays, filterScannerCandidates, hasStructuralBlocker } from "../src/lib/scanner-visuals.ts";
+import { candidateCounts, currentLifecycleTransitions, defaultScannerTimeframe, exactCurrentTrigger, extractScannerOverlays, filterScannerCandidates, hasStructuralBlocker } from "../src/lib/scanner-visuals.ts";
 
 function setup(id, setupType, status, structure = {}) {
   return { id, symbol: "BTCUSDT", setup_type: setupType, status, state: { structure }, version: 1, trade_plan_id: null, last_evaluated_at: null, updated_at: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" };
@@ -109,6 +109,67 @@ test("missing canonical macro source suppresses stale setup and trigger overlays
 test("canonical macro source permits persisted evidence rendering", () => {
   const row = setup("current", "MACRO_BREAKOUT_LONG", "BREAKOUT_ACCEPTED", { structure_id: "current-structure", breakout_level: 100 });
   assert.equal(extractScannerOverlays(row, null, [], new Set(["current-structure"])).staleCanonicalReference, false);
+});
+
+test("reconciliation boundary removes obsolete lifecycle markers without deleting history", () => {
+  const row = setup("reset", "MACRO_BREAKOUT_LONG", "WATCH");
+  row.version = 5;
+  row.state.lifecycle_episode = 5;
+  row.state.lifecycle_reset_reason = "STALE_STRUCTURE_REFERENCE_RECONCILED";
+  row.state.blocking_reasons = ["STRUCTURE_REQUIRED"];
+  const history = [
+    { version: 2, to_status: "BREAKOUT_ATTEMPT", timestamp: "2026-01-01T00:00:00Z", state_after: {} },
+    { version: 3, to_status: "BREAKOUT_ACCEPTED", timestamp: "2026-01-01T01:00:00Z", state_after: {} },
+    { version: 4, to_status: "TRIGGER_ARMED", timestamp: "2026-01-01T02:00:00Z", state_after: {} },
+    { version: 5, to_status: "WATCH", timestamp: "2026-01-01T03:00:00Z", state_after: { lifecycle_episode: 5, lifecycle_reset_reason: "STALE_STRUCTURE_REFERENCE_RECONCILED" } },
+  ];
+  assert.equal(history.length, 4);
+  assert.deepEqual(currentLifecycleTransitions(row, history), []);
+  assert.deepEqual(extractScannerOverlays(row, null, history).markers, []);
+});
+
+test("replacement lifecycle renders only post-boundary transitions", () => {
+  const row = setup("replacement", "MACRO_BREAKOUT_LONG", "BREAKOUT_ACCEPTED", { structure_id: "replacement", breakout_level: 105 });
+  row.version = 8;
+  row.state.lifecycle_episode = 5;
+  row.state.accepted_at = "2026-01-02T02:00:00Z";
+  const history = [
+    { version: 2, to_status: "BREAKOUT_ATTEMPT", timestamp: "2026-01-01T00:00:00Z", state_after: {} },
+    { version: 4, to_status: "TRIGGER_ARMED", timestamp: "2026-01-01T02:00:00Z", state_after: {} },
+    { version: 5, to_status: "WATCH", timestamp: "2026-01-01T03:00:00Z", state_after: { lifecycle_episode: 5, lifecycle_reset_reason: "CANONICAL_STRUCTURE_CHANGED" } },
+    { version: 6, to_status: "APPROACHING_BREAKOUT", timestamp: "2026-01-02T00:00:00Z", state_after: { lifecycle_episode: 5 } },
+    { version: 7, to_status: "BREAKOUT_ATTEMPT", timestamp: "2026-01-02T01:00:00Z", state_after: { lifecycle_episode: 5 } },
+    { version: 8, to_status: "BREAKOUT_ACCEPTED", timestamp: "2026-01-02T02:00:00Z", state_after: { lifecycle_episode: 5 } },
+  ];
+  const markerText = extractScannerOverlays(row, null, history, new Set(["replacement"])).markers.map((marker) => marker.text);
+  assert.deepEqual(markerText, ["BREAKOUT ATTEMPT", "BREAKOUT ACCEPTED"]);
+});
+
+test("current armed episode retains earlier transitions instead of filtering to current version", () => {
+  const row = setup("armed", "MACRO_BREAKOUT_LONG", "TRIGGER_ARMED", { structure_id: "line", breakout_level: 100 });
+  row.version = 4;
+  const history = [
+    { version: 2, to_status: "BREAKOUT_ATTEMPT", timestamp: "2026-01-01T00:00:00Z", state_after: {} },
+    { version: 3, to_status: "BREAKOUT_ACCEPTED", timestamp: "2026-01-01T01:00:00Z", state_after: {} },
+    { version: 4, to_status: "TRIGGER_ARMED", timestamp: "2026-01-01T02:00:00Z", state_after: {} },
+  ];
+  const markers = extractScannerOverlays(row, null, history, new Set(["line"])).markers;
+  assert.deepEqual(markers.map((marker) => marker.text), ["BREAKOUT ATTEMPT", "BREAKOUT ACCEPTED", "TRIGGER ARMED"]);
+  assert.ok(markers.some((marker) => marker.text === "BREAKOUT ATTEMPT" && row.version !== 2));
+});
+
+test("reset state blocks accepted_at leakage and isolates Range/Fib markers", () => {
+  const history = [
+    { version: 2, to_status: "BREAKOUT_ACCEPTED", timestamp: "2026-01-01T00:00:00Z", state_after: {} },
+    { version: 3, to_status: "WATCH", timestamp: "2026-01-01T01:00:00Z", state_after: { lifecycle_episode: 3, lifecycle_reset_reason: "CANONICAL_STRUCTURE_CHANGED" } },
+  ];
+  for (const setupType of ["RANGE_LONG", "TREND_PULLBACK_LONG"]) {
+    const row = setup(setupType, setupType, "WATCH");
+    row.state.lifecycle_episode = 3;
+    row.state.lifecycle_reset_reason = "CANONICAL_STRUCTURE_CHANGED";
+    row.state.accepted_at = "2026-01-01T00:00:00Z";
+    assert.deepEqual(extractScannerOverlays(row, null, history).markers, []);
+  }
 });
 
 test("disabled private sync has explicit preview data instead of an API failure", () => {
